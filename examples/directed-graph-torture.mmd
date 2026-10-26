@@ -1,0 +1,85 @@
+flowchart LR
+    %% Mermaid Focus directed-graph torture test.
+    %% Independent node definitions keep the fixture compatible with the offline parser.
+    Start{"START: choose a branch"}
+    Split{"Fan-out: many exits"}
+    A["Node A: self-loop and mutual edge"]
+    B["Node B: returns to A"]
+    C["Node C: direct join"]
+    Tri1["Three-cycle 1"]
+    Tri2["Three-cycle 2"]
+    Tri3["Three-cycle 3"]
+    Merge{"Many-to-one merge"}
+    Chain1["Long chain 1"]
+    Chain2["Long chain 2"]
+    Chain3["Long chain 3"]
+    Chain4["Long chain 4"]
+    Decision{"Feedback loop or finish?"}
+    Left["Diamond left"]
+    Right["Diamond right"]
+    DiamondJoin["Diamond join"]
+    TerminalA["Immediate dead end"]
+    TerminalB["Final dead end"]
+    Duplicate1["Same visible label"]
+    Duplicate2["Same visible label"]
+    Long["Extremely long node: Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."]
+    Unicode["Unicode: café, עברית, 中文, emoji 🚀 and &amp;"]
+    Note["Dotted annotation: not an answer"]
+    RemoteStart["SECOND ROOT: not reachable from Start"]
+    RemoteEnd["Second component dead end"]
+    RemoteA["Remote cycle A"]
+    RemoteB["Remote cycle B"]
+    Island["ISOLATED NODE: degree zero"]
+    LoneLoop["DISCONNECTED SELF-LOOP"]
+
+    Start -->|main branch| Split
+    Start -->|direct sink| TerminalA
+    Start -->|same choice| Duplicate1
+    Start -->|same choice| Duplicate2
+
+    Split -->|A| A
+    Split -->|B| B
+    Split -->|C| C
+    Split -->|parallel one| Merge
+    Split -->|parallel two| Merge
+    Split -->|long label / punctuation: ?! &amp; - yes| Long
+    Split --> Unicode
+
+    A -->|self-loop| A
+    A -->|to B| B
+    B -->|back to A| A
+    A --> Tri1
+    Tri1 --> Tri2
+    Tri2 --> Tri3
+    Tri3 -->|completes 3-cycle| Tri1
+    Tri3 -->|escape cycle| Merge
+    B --> Merge
+    C --> Merge
+    Long --> Merge
+    Unicode --> Merge
+    Duplicate1 --> Merge
+    Duplicate2 --> Merge
+
+    Merge --> Chain1
+    Merge -->|skip three levels| Chain4
+    Chain1 --> Chain2
+    Chain2 --> Chain3
+    Chain3 --> Chain4
+    Chain4 --> Decision
+    Decision -->|self retry| Decision
+    Decision -->|large feedback cycle| Split
+    Decision -->|left path| Left
+    Decision -->|right path| Right
+    Left --> DiamondJoin
+    Right --> DiamondJoin
+    DiamondJoin --> TerminalB
+    TerminalB -.-> Note
+
+    RemoteStart --> RemoteEnd
+    RemoteA -->|two-node cycle| RemoteB
+    RemoteB -->|back| RemoteA
+    LoneLoop -->|only itself| LoneLoop
+
+    %% Dotted associations are visual only; never wizard choices.
+    Note -.-> Merge
+    Note -.-> Island
