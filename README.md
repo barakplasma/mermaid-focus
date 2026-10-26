@@ -6,6 +6,20 @@ Progressive disclosure for Mermaid flowcharts. Turn a flowchart into a **guided 
 
 **Live preview:** [Open the demo](https://mermaid-focus.barakplasma.workers.dev/).
 
+## Stress-testing directed graphs
+
+Switch **Example → Directed-graph torture test** in the demo to inspect a deliberately
+non-tree graph, or open `/?example=torture` on the hosted site. The fixture is
+[`examples/directed-graph-torture.mmd`](examples/directed-graph-torture.mmd):
+30 nodes, 42 directed edges, and 3 dotted annotations. It covers self-loops,
+two- and three-node cycles, larger feedback cycles, parallel edges, joins, forks,
+long links, deep chains, unreachable components, sinks, and an isolated node.
+
+Use **Jump to node** to explore unreachable components. The `jumpTo(id)` API
+resets the navigation history when switching components. See
+[coverage and test instructions](docs/torture-test.md) and run
+`python tests/torture_smoke.py` after installing Playwright/Chromium.
+
 ## Features
 
 - **Spotlight:** Current node + incoming/outgoing connected nodes and labeled arrows, configurable **1–4 hops**.
