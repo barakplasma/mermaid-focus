@@ -17,7 +17,7 @@
  * graph as { nodes:[{id,label,domId?}], edges:[{start,end,label?}] }.
  */
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const DEFAULT_MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.esm.min.mjs';
 let mermaidPromise;
 let uniqueId = 0;
@@ -652,6 +652,13 @@ async function createMermaidFocus(host, options = {}) {
       focusDepth=Math.max(1,Math.min(4,Number(distance)||1));
       depthSelect.value=String(focusDepth);
       overview=false; paint(); report(); return focusDepth;
+    },
+    jumpTo(id) {
+      // Debugging and disconnected graphs: switch to any node, without treating
+      // an impossible cross-component jump as a real decision in the history.
+      if (!graph || !graph.nodes.some(n=>n.id===id)) return false;
+      if (current === id) return true;
+      path=[]; current=id; overview=false; paint(); report(); return true;
     },
     next(id) {
       if (!graph || !graph.edges.some(e=>e.start===current && e.end===id)) return false;
