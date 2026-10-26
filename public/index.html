@@ -10,6 +10,11 @@
     h1{margin:0;font-size:clamp(26px,4vw,42px);letter-spacing:-.05em}header p{color:#c4d3e9;margin:6px 0 0;max-width:700px}
     main{max-width:1166px;margin:14px auto;padding:0 18px 40px;display:grid;grid-template-columns:1fr;gap:15px}
     #wizard{display:block;min-width:0}.editor{background:white;border:1px solid #dce2ec;border-radius:14px;padding:15px}
+    .example-controls{display:flex;align-items:center;flex-wrap:wrap;gap:12px;background:white;border:1px solid #dce2ec;border-radius:14px;padding:12px 16px}
+    .example-controls label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650}
+    .example-controls select{min-width:170px;max-width:100%;border-radius:9px;border:1px solid #c9d4e2;background:white;padding:9px;color:#172435;font:inherit}
+    #jump{max-width:260px}
+    @media(max-width:620px){.example-controls label{width:100%;justify-content:space-between}.example-controls select{width:65%}}
     details summary{cursor:pointer;font-size:14px;font-weight:700}.editor-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0;flex-wrap:wrap}
     textarea{font:13px/1.55 ui-monospace,Menlo,monospace;width:100%;min-height:330px;resize:vertical;border:1px solid #c9d4e2;border-radius:9px;padding:13px}
     button{padding:10px 16px;border-radius:9px;border:0;background:#245fdb;color:white;font:inherit;font-weight:650;cursor:pointer}
@@ -21,10 +26,23 @@
 <body>
   <header><h1>Mermaid Focus</h1><p>Explore the complete flowchart one branch at a time. See nearby nodes and connecting arrows, or switch to distraction-free Wizard mode.</p></header>
   <main>
+    <section class="example-controls" aria-label="Example and node navigation">
+      <label for="example">Example
+        <select id="example">
+          <option value="emotion">Emotion regulation</option>
+          <option value="torture">Directed-graph torture test</option>
+          <option value="custom">Custom Mermaid</option>
+        </select>
+      </label>
+      <label for="jump">Jump to node
+        <select id="jump" aria-label="Jump to any node, including disconnected components"></select>
+      </label>
+      <span class="muted" id="example-description">Choose an example, then explore it in Spotlight or Wizard mode.</span>
+    </section>
     <div id="wizard" aria-label="Interactive flowchart"></div>
     <section class="editor">
-      <details><summary>Edit Mermaid source (the original flowchart is preloaded)</summary>
-        <div class="editor-actions"><button id="apply">Load flowchart</button><span id="status" role="status" class="muted">Original Mermaid flowchart loaded.</span></div>
+      <details><summary>Edit Mermaid source (selected example is preloaded)</summary>
+        <div class="editor-actions"><button id="apply">Load flowchart</button><span id="status" role="status" class="muted">Selected Mermaid example loaded.</span></div>
         <textarea spellcheck="false" id="source"></textarea>
       </details>
     </section>
@@ -51,7 +69,7 @@
  * graph as { nodes:[{id,label,domId?}], edges:[{start,end,label?}] }.
  */
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const DEFAULT_MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.esm.min.mjs';
 let mermaidPromise;
 let uniqueId = 0;
@@ -687,6 +705,12 @@ async function createMermaidFocus(host, options = {}) {
       depthSelect.value=String(focusDepth);
       overview=false; paint(); report(); return focusDepth;
     },
+    jumpTo(id) {
+      // Switch to disconnected or unreachable components for testing.
+      if (!graph || !graph.nodes.some(n=>n.id===id)) return false;
+      if (current===id) return true;
+      path=[]; current=id; overview=false; paint(); report(); return true;
+    },
     next(id) {
       if (!graph || !graph.edges.some(e=>e.start===current && e.end===id)) return false;
       path.push(current); current = id; paint(); report(); return true;
@@ -764,7 +788,23 @@ window.MermaidFocus = {createMermaidFocus, version};
   </script>
   <script>
     const SAMPLE="flowchart TD\n    Start{\"Wanna change<br/>that feeling?\"}\n\n    Start -->|\"Yes!!\"| Needs\n    Start -->|\"Nah, not really\"| Sit[\"Sit with it!\"]\n\n    Needs{\"Are you adequately:<br/>• Hydrated<br/>• Medicated<br/>• Nourished<br/>• Rested?\"}\n    Needs -->|\"Uh... no\"| PLEASE[\"Use PLEASE\"]\n    PLEASE -->|\"Return to start\"| Start\n    Needs -->|\"Reasonably, yeah\"| Overwhelmed\n\n    Overwhelmed{\"Are you feeling<br/>overwhelmed by<br/>the emotion?\"}\n    Overwhelmed -->|\"Yes!\"| Distress[\"Go to Distress<br/>Tolerance Flow Chart\"]\n    Overwhelmed -->|\"No\"| Regulate[\"Awesome! You're in<br/>the right place!<br/>Let's regulate!\"]\n    Regulate --> Feeling\n\n    Feeling{\"Do you know<br/>WHAT you are feeling?\"}\n    Feeling -->|\"Uh, no\"| Sensation[\"Use Emotion Sensation Wheel,<br/>notice your body, and explore\"]\n    Feeling -->|\"Yes\"| Trigger\n\n    Trigger{\"Do you know what<br/>triggered this emotion?\"}\n    Trigger -->|\"No\"| Facts[\"Use CHECK the FACTS\"]\n    Trigger -->|\"Yes\"| Context\n\n    Context{\"Does your reaction<br/>FIT THE CONTEXT?\"}\n    Context -->|\"Maybe\"| Facts\n    Context -->|\"Yes\"| Change\n\n    Change{\"Can anything you do now<br/>change the situation?\"}\n    Change -->|\"Yes\"| Solve[\"PROBLEM SOLVE!\"]\n    Change -->|\"No\"| Soothe[\"Self-soothe +<br/>radical acceptance\"]\n\n    ABC[\"Use ABC to grow your ability<br/>to stay grounded through emotions\"]\n    ABC -.-> Solve\n    ABC -.-> Soothe\n\n    style Start fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e\n    style Solve fill:#dcfce7,stroke:#16a34a,color:#14532d\n    style Soothe fill:#dcfce7,stroke:#16a34a,color:#14532d\n    style Sit fill:#dcfce7,stroke:#16a34a,color:#14532d\n    style Distress fill:#fef3c7,stroke:#d97706,color:#78350f\n    style PLEASE fill:#fef3c7,stroke:#d97706,color:#78350f\n    style Facts fill:#fef3c7,stroke:#d97706,color:#78350f\n    style Sensation fill:#fef3c7,stroke:#d97706,color:#78350f\n    style ABC fill:#f3e8ff,stroke:#9333ea,color:#581c87\n";
+    const TORTURE="flowchart LR\n    %% Mermaid Focus directed-graph torture test.\n    %% Independent node definitions keep the fixture compatible with the offline parser.\n    Start{\"START: choose a branch\"}\n    Split{\"Fan-out: many exits\"}\n    A[\"Node A: self-loop and mutual edge\"]\n    B[\"Node B: returns to A\"]\n    C[\"Node C: direct join\"]\n    Tri1[\"Three-cycle 1\"]\n    Tri2[\"Three-cycle 2\"]\n    Tri3[\"Three-cycle 3\"]\n    Merge{\"Many-to-one merge\"}\n    Chain1[\"Long chain 1\"]\n    Chain2[\"Long chain 2\"]\n    Chain3[\"Long chain 3\"]\n    Chain4[\"Long chain 4\"]\n    Decision{\"Feedback loop or finish?\"}\n    Left[\"Diamond left\"]\n    Right[\"Diamond right\"]\n    DiamondJoin[\"Diamond join\"]\n    TerminalA[\"Immediate dead end\"]\n    TerminalB[\"Final dead end\"]\n    Duplicate1[\"Same visible label\"]\n    Duplicate2[\"Same visible label\"]\n    Long[\"Extremely long node: Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\"]\n    Unicode[\"Unicode: café, עברית, 中文, emoji 🚀 and &amp;\"]\n    Note[\"Dotted annotation: not an answer\"]\n    RemoteStart[\"SECOND ROOT: not reachable from Start\"]\n    RemoteEnd[\"Second component dead end\"]\n    RemoteA[\"Remote cycle A\"]\n    RemoteB[\"Remote cycle B\"]\n    Island[\"ISOLATED NODE: degree zero\"]\n    LoneLoop[\"DISCONNECTED SELF-LOOP\"]\n\n    Start -->|main branch| Split\n    Start -->|direct sink| TerminalA\n    Start -->|same choice| Duplicate1\n    Start -->|same choice| Duplicate2\n\n    Split -->|A| A\n    Split -->|B| B\n    Split -->|C| C\n    Split -->|parallel one| Merge\n    Split -->|parallel two| Merge\n    Split -->|long label / punctuation: ?! &amp; - yes| Long\n    Split --> Unicode\n\n    A -->|self-loop| A\n    A -->|to B| B\n    B -->|back to A| A\n    A --> Tri1\n    Tri1 --> Tri2\n    Tri2 --> Tri3\n    Tri3 -->|completes 3-cycle| Tri1\n    Tri3 -->|escape cycle| Merge\n    B --> Merge\n    C --> Merge\n    Long --> Merge\n    Unicode --> Merge\n    Duplicate1 --> Merge\n    Duplicate2 --> Merge\n\n    Merge --> Chain1\n    Merge -->|skip three levels| Chain4\n    Chain1 --> Chain2\n    Chain2 --> Chain3\n    Chain3 --> Chain4\n    Chain4 --> Decision\n    Decision -->|self retry| Decision\n    Decision -->|large feedback cycle| Split\n    Decision -->|left path| Left\n    Decision -->|right path| Right\n    Left --> DiamondJoin\n    Right --> DiamondJoin\n    DiamondJoin --> TerminalB\n    TerminalB -.-> Note\n\n    RemoteStart --> RemoteEnd\n    RemoteA -->|two-node cycle| RemoteB\n    RemoteB -->|back| RemoteA\n    LoneLoop -->|only itself| LoneLoop\n\n    %% Dotted associations are visual only; never wizard choices.\n    Note -.-> Merge\n    Note -.-> Island\n";
     const input=document.getElementById('source'),status=document.getElementById('status');
+    const example=document.getElementById('example'), jump=document.getElementById('jump');
+    const description=document.getElementById('example-description');
+    function refreshJump(){
+      if(!app)return;
+      const graph=app.getGraph();
+      jump.replaceChildren();
+      for(const node of graph.nodes){
+        const option=document.createElement('option');
+        option.value=node.id;
+        option.textContent=node.id+' — '+node.label.replace(/\s+/g,' ').slice(0,68);
+        jump.append(option);
+      }
+      jump.value=app.getState().current;
+    }
+    function syncJump(state){if(jump.options.length)jump.value=state.current;}
     input.value=SAMPLE;
     let app=null;
     async function load(text){
@@ -773,19 +813,33 @@ window.MermaidFocus = {createMermaidFocus, version};
         // Reuse the same app instance; retains the SVG-first engine.
         if(app) await app.setSource(text);
         else app=await MermaidFocus.createMermaidFocus('#wizard',{
-          source:text, mode:'spotlight', focusDepth:1, duration:330, details:{"Start": {"intro": "It is okay to experience an emotion without changing it. Decide whether your goal is to regulate its intensity or simply let it pass."}, "Needs": {"intro": "PLEASE starts with the basics: physical health, nutrition, treatment and sleep. If one is missing, attend to it before analyzing the feeling."}, "Sit": {"intro": "Allow the feeling to exist without immediately fixing it. Notice sensations, name the emotion, and wait for the intensity to change naturally."}, "PLEASE": {"intro": "This DBT skill lowers vulnerability to intense emotions.", "steps": ["Treat physical illness and take prescribed medication as directed.", "Eat regularly and drink some water.", "Avoid substances that make emotional regulation harder.", "Prioritize sleep and sustainable physical activity.", "When reasonably supported, restart to reassess the emotion."]}, "Overwhelmed": {"intro": "If the intensity is too high to think clearly or choose a skill, prioritize safety and distress tolerance before continuing."}, "Distress": {"intro": "Use short-term skills to ride out the emotional peak without making the situation worse.", "steps": ["Ground yourself: name five things you can see and feel your feet on the floor.", "Slow the exhale or try cool water on your face.", "Take a brief break from impulsive decisions, arguments or messages.", "Come back to the flow when you can think clearly."]}, "Regulate": {"intro": "The emotion is manageable enough to explore. Try identifying the feeling and its trigger before acting."}, "Feeling": {"intro": "Common categories: fear, anger, sadness, disgust, joy, surprise, shame or guilt. Several can coexist."}, "Sensation": {"intro": "Look for patterns in your body; physical sensations are clues, not definitive evidence.", "steps": ["Notice temperature, heart rate, breathing, muscle tension and energy.", "Consider an emotion wheel to name a feeling more precisely.", "Reassess what you feel once you have a candidate."]}, "Trigger": {"intro": "A trigger may be an event, thought, assumption, memory, interaction or physical state."}, "Facts": {"intro": "Separate what you know from what you assume.", "steps": ["Describe the observable event without judgments.", "List what you inferred about others’ intentions or consequences.", "Check evidence for and against the interpretation.", "Consider alternative explanations and whether the intensity matches the facts."]}, "Context": {"intro": "Ask whether the emotion and its intensity make sense for the actual facts, not just the first interpretation that came to mind."}, "Change": {"intro": "Can you change something specific in this situation right now? Focus on an action within your control."}, "Solve": {"intro": "Choose a practical next step rather than trying to eliminate the feeling directly.", "steps": ["Define the solvable problem in one sentence.", "Generate two or three reasonable options.", "Pick the smallest useful action and try it.", "Review the outcome and adjust your plan."]}, "Soothe": {"intro": "Acceptance is acknowledging reality, not approving of it.", "steps": ["Use calming sensory input, grounding, music, a walk or supportive company.", "Remind yourself: “This is what is happening right now.”", "Allow discomfort without making an unchangeable situation your enemy."]}, "ABC": {"intro": "A: accumulate positive experiences. B: build mastery. C: cope ahead by rehearsing how to respond to likely challenges."}},
-          engine:'builtin', title:'Emotion regulation',
+          source:text, mode:'spotlight', focusDepth:1, duration:330, onChange:syncJump, details:{"Start": {"intro": "It is okay to experience an emotion without changing it. Decide whether your goal is to regulate its intensity or simply let it pass."}, "Needs": {"intro": "PLEASE starts with the basics: physical health, nutrition, treatment and sleep. If one is missing, attend to it before analyzing the feeling."}, "Sit": {"intro": "Allow the feeling to exist without immediately fixing it. Notice sensations, name the emotion, and wait for the intensity to change naturally."}, "PLEASE": {"intro": "This DBT skill lowers vulnerability to intense emotions.", "steps": ["Treat physical illness and take prescribed medication as directed.", "Eat regularly and drink some water.", "Avoid substances that make emotional regulation harder.", "Prioritize sleep and sustainable physical activity.", "When reasonably supported, restart to reassess the emotion."]}, "Overwhelmed": {"intro": "If the intensity is too high to think clearly or choose a skill, prioritize safety and distress tolerance before continuing."}, "Distress": {"intro": "Use short-term skills to ride out the emotional peak without making the situation worse.", "steps": ["Ground yourself: name five things you can see and feel your feet on the floor.", "Slow the exhale or try cool water on your face.", "Take a brief break from impulsive decisions, arguments or messages.", "Come back to the flow when you can think clearly."]}, "Regulate": {"intro": "The emotion is manageable enough to explore. Try identifying the feeling and its trigger before acting."}, "Feeling": {"intro": "Common categories: fear, anger, sadness, disgust, joy, surprise, shame or guilt. Several can coexist."}, "Sensation": {"intro": "Look for patterns in your body; physical sensations are clues, not definitive evidence.", "steps": ["Notice temperature, heart rate, breathing, muscle tension and energy.", "Consider an emotion wheel to name a feeling more precisely.", "Reassess what you feel once you have a candidate."]}, "Trigger": {"intro": "A trigger may be an event, thought, assumption, memory, interaction or physical state."}, "Facts": {"intro": "Separate what you know from what you assume.", "steps": ["Describe the observable event without judgments.", "List what you inferred about others’ intentions or consequences.", "Check evidence for and against the interpretation.", "Consider alternative explanations and whether the intensity matches the facts."]}, "Context": {"intro": "Ask whether the emotion and its intensity make sense for the actual facts, not just the first interpretation that came to mind."}, "Change": {"intro": "Can you change something specific in this situation right now? Focus on an action within your control."}, "Solve": {"intro": "Choose a practical next step rather than trying to eliminate the feeling directly.", "steps": ["Define the solvable problem in one sentence.", "Generate two or three reasonable options.", "Pick the smallest useful action and try it.", "Review the outcome and adjust your plan."]}, "Soothe": {"intro": "Acceptance is acknowledging reality, not approving of it.", "steps": ["Use calming sensory input, grounding, music, a walk or supportive company.", "Remind yourself: “This is what is happening right now.”", "Allow discomfort without making an unchangeable situation your enemy."]}, "ABC": {"intro": "A: accumulate positive experiences. B: build mastery. C: cope ahead by rehearsing how to respond to likely challenges."}},
+          engine:'builtin', title:'Mermaid Focus',
         });
         status.textContent=`Loaded: ${app.getGraph().nodes.length} nodes, ${app.getGraph().edges.length} guided connections`;
         status.className='muted';
         window.focusDemo=app;
+        refreshJump();
       } catch(e) {
         status.textContent=`Error: ${e.message}`;status.className='error';
         console.error(e);
       }
     }
-    document.getElementById('apply').addEventListener('click',()=>load(input.value));
-    load(SAMPLE);
+    jump.addEventListener('change',()=>{if(app)app.jumpTo(jump.value)});
+    example.addEventListener('change',()=>{
+      if(example.value==='custom'){input.focus();return;}
+      input.value=example.value==='torture'?TORTURE:SAMPLE;
+      description.textContent=example.value==='torture'
+        ? '30 nodes, 42 directed edges, 3 dotted annotations. Includes unreachable components and an isolated node.'
+        : 'Original DBT flowchart with guided emotion-regulation choices.';
+      load(input.value);
+    });
+    document.getElementById('apply').addEventListener('click',()=>{example.value='custom';load(input.value)});
+    // A direct URL to the torture test is useful for sharing QA reports.
+    example.value=new URLSearchParams(location.search).get('example')==='torture'?'torture':'emotion';
+    input.value=example.value==='torture'?TORTURE:SAMPLE;
+    if(example.value==='torture') description.textContent='30 nodes, 42 directed edges, 3 dotted annotations. Includes unreachable components and an isolated node.';
+    load(input.value);
   </script>
 </body>
 </html>
