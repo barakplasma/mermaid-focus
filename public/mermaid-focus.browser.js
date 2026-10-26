@@ -469,13 +469,12 @@ async function createMermaidFocus(host, options = {}) {
     pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
     pointerStart={x:event.clientX,y:event.clientY,moved:false};
     if(pointers.size===2){const arr=[...pointers.values()];pinchStart={distance:Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y)};}
-    vision.setPointerCapture(event.pointerId);
   });
   vision.addEventListener('pointermove',event=>{
     const old=pointers.get(event.pointerId);if(!old)return;
     const point={x:event.clientX,y:event.clientY};pointers.set(event.pointerId,point);
     const dx=point.x-old.x,dy=point.y-old.y;
-    if(pointerStart && Math.hypot(point.x-pointerStart.x,point.y-pointerStart.y)>6){pointerStart.moved=true;suppressNodeClick=true;}
+    if(pointerStart && Math.hypot(point.x-pointerStart.x,point.y-pointerStart.y)>6){pointerStart.moved=true;suppressNodeClick=true; if(!vision.hasPointerCapture(event.pointerId))vision.setPointerCapture(event.pointerId);}
     if(pointers.size===2){
       const arr=[...pointers.values()],distance=Math.max(1,Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y));
       const midpoint={x:(arr[0].x+arr[1].x)/2,y:(arr[0].y+arr[1].y)/2},rect=vision.getBoundingClientRect();

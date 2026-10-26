@@ -19,6 +19,11 @@ with sync_playwright() as p:
         assert page.locator('#wizard').locator('select.mf-depth').count() == 1
         page.locator('#wizard').locator('select.mf-depth').select_option('2')
         assert page.evaluate('window.focusDemo.getState().focusDepth') == 2
+        before = page.evaluate('window.focusDemo.getCamera().w')
+        page.locator('#wizard').locator('button.mf-zoom-in').click()
+        assert page.evaluate('window.focusDemo.getCamera().w') < before
+        page.locator('#wizard').locator('button.mf-fit-node').click()
+        assert page.evaluate('window.focusDemo.getCamera().w') > 0
         page.locator('#wizard').locator('button.mf-answer').first.click()
         assert page.evaluate('window.focusDemo.getState().path.length') == 1
         page.locator('#wizard').locator('button.mf-overview-button').click()
