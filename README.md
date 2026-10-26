@@ -76,3 +76,14 @@ This creates or updates the `mermaid-focus` Worker in whichever Cloudflare accou
 ## License
 
 MIT. See [LICENSE](LICENSE).
+## Continuous deployment
+
+A GitHub Actions workflow deploys changes on `main` to the existing Cloudflare Worker **mermaid-focus**.
+
+1. Create a Cloudflare API token scoped to this account with **Workers Scripts: Edit** (and any additional permissions Wrangler reports for Workers static assets).
+2. In [repository Actions secrets](https://github.com/barakplasma/mermaid-focus/settings/secrets/actions), create `CLOUDFLARE_API_TOKEN` and paste the token.
+3. Run the [Deploy Mermaid Focus workflow](https://github.com/barakplasma/mermaid-focus/actions/workflows/deploy.yml) manually once to verify access. Subsequently, pushes to `main` that change `public/**`, `wrangler.jsonc`, `package.json`, or the workflow deploy automatically.
+
+The Cloudflare account ID is non-secret and is specified in the workflow. **The secret is not configured yet.** Another option is Cloudflare Workers Builds: in the Cloudflare dashboard, open the existing `mermaid-focus` Worker, go to Settings → Builds → Connect, and grant the Cloudflare GitHub integration access to this private repository. Use one deployment mechanism or disable the other to avoid duplicate deployments.
+
+The currently hosted `workers.dev` demo can differ from the checked-in source if modified directly through the Cloudflare API. After auto-deploy is configured, Git should be the source of truth.

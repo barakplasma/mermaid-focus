@@ -17,7 +17,7 @@
  * graph as { nodes:[{id,label,domId?}], edges:[{start,end,label?}] }.
  */
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const DEFAULT_MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.esm.min.mjs';
 let mermaidPromise;
 let uniqueId = 0;
@@ -351,12 +351,17 @@ const CSS = `
 .mf-bottom button:disabled { cursor:default; opacity:.4; }
 .mf-counter { color:var(--mf-muted); font-size:12px; }
 .mf-spotlight[hidden] { display:none !important; }
-.mf-spotlight { background:var(--mf-well); height:clamp(450px,66vh,670px); margin:0; overflow:auto; position:relative; border-bottom:1px solid var(--mf-border); overscroll-behavior:contain; }
-.mf-spotlight > div:first-child { width:100%; min-height:100%; }
-.mf-spotlight svg { display:block; width:100%; height:auto; max-width:none !important; transition:opacity .22s; }
+.mf-spotlight { background:var(--mf-well); height:clamp(400px,65vh,670px); margin:0; overflow:hidden; position:relative; border-bottom:1px solid var(--mf-border); touch-action:none; cursor:grab; user-select:none; }
+.mf-spotlight:active{cursor:grabbing}.mf-spotlight > div:first-child { width:100%; height:100%; }
+.mf-spotlight svg { display:block; width:100%; height:100%; max-width:none !important; }
 .mf-focus-node[role="button"] { cursor:pointer; }
 .mf-focus-node[role="button"]:hover rect { stroke:#1d4ed8;stroke-width:4; }
-.mf-spotlight.mf-overview svg { cursor:zoom-in; }
+.mf-camera-controls{position:absolute;left:12px;bottom:12px;z-index:6;display:flex;align-items:center;gap:5px;background:#fffffff5;border:1px solid var(--mf-border);padding:6px;border-radius:11px;box-shadow:0 3px 18px #1e293b20;touch-action:manipulation;cursor:auto}
+.mf-camera-controls button{border:1px solid var(--mf-border);background:white;color:#172435;border-radius:7px;font:700 14px system-ui;min-width:35px;min-height:35px;cursor:pointer}
+.mf-camera-controls button:hover,.mf-camera-controls button:focus-visible{background:#dbeafe}
+.mf-camera-zoom{font:650 12px system-ui;min-width:44px;text-align:center;color:#475569}
+.mf-camera-hint{position:absolute;right:12px;bottom:15px;color:#475569;font:11px system-ui;pointer-events:none;background:#ffffffb8;padding:4px 7px;border-radius:6px}
+@media(max-width:560px){.mf-camera-hint{display:none}.mf-camera-controls{left:8px;bottom:8px;padding:4px}}
 .mf-spotlight .node, .mf-spotlight .edgePath, .mf-spotlight .edgeLabel, .mf-spotlight .flowchart-link { transition:opacity .2s; }
 .mf-spotlight .mf-hidden { opacity:0 !important; pointer-events:none !important; }
 .mf-loading,.mf-error { padding:30px; background:var(--mf-well); font-size:14px; white-space:pre-wrap; }
@@ -395,6 +400,15 @@ async function createMermaidFocus(host, options = {}) {
   vision.append(elt('div','mf-spotlabel','Focused diagram'));
   const overviewButton = btn('Overview', () => api.toggleOverview(), 'mf-overview-button');
   vision.append(overviewButton);
+  const controls=elt('div','mf-camera-controls');controls.setAttribute('aria-label','Pan and zoom controls');
+  const zoomOut=btn('−',()=>api.zoomOut(),'mf-zoom-out');zoomOut.title='Zoom out';zoomOut.setAttribute('aria-label','Zoom out');
+  const zoomLevel=elt('output','mf-camera-zoom','100%');
+  const zoomIn=btn('+',()=>api.zoomIn(),'mf-zoom-in');zoomIn.title='Zoom in';zoomIn.setAttribute('aria-label','Zoom in');
+  const fitNodeButton=btn('Center',()=>api.fitNode(),'mf-fit-node');fitNodeButton.title='Center current node';
+  const fitAllButton=btn('Fit all',()=>api.fitAll(),'mf-fit-all');fitAllButton.title='Fit visible graph';
+  controls.append(zoomOut,zoomLevel,zoomIn,fitNodeButton,fitAllButton);
+  const cameraHint=elt('div','mf-camera-hint','Drag to pan · Wheel to zoom');
+  vision.append(controls,cameraHint);
   shell.append(vision);
   const graphMeta=elt('div','mf-graph-meta');shell.append(graphMeta);
   const body = elt('main','mf-body'); shell.append(body);
@@ -407,8 +421,73 @@ async function createMermaidFocus(host, options = {}) {
   let svgReady = false, destroyed = false, source = opts.source ?? null, mode = opts.mode;
   let builtinSvg = null;
   let overview = false, animation = null, lastBox = null, resizeObserver = null, svgRenderPromise = null;
+  let camera=null, viewSource=null, zoomFactor=1;
+  const pointers=new Map();let pointerStart=null,pinchStart=null,suppressNodeClick=false;
+  const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
+  function viewportAspect(){return Math.max(0.2,vision.clientHeight/Math.max(1,vision.clientWidth));}
+  function graphRect(){return viewSource || {x:0,y:0,w:508,h:400};}
+  function setCamera(next){
+    if(!svg || !next)return;
+    const ratio=viewportAspect(), w=clamp(next.w,90,Math.max(20000,graphRect().w*5));
+    camera={x:next.x,y:next.y,w,h:w*ratio};
+    svg.setAttribute('viewBox',`${camera.x} ${camera.y} ${camera.w} ${camera.h}`);
+    svg.setAttribute('preserveAspectRatio','none');
+    zoomLevel.textContent=Math.round(100*Math.max(440,Math.min(760,vision.clientWidth*0.85))/camera.w)+'%';
+  }
+  function fitCurrent(resetZoom=false){
+    if(!svg)return;
+    if(resetZoom)zoomFactor=1;
+    const active=[...svg.querySelectorAll("[data-node-id]")].find(el=>el.getAttribute("data-node-id")===current) || svgNode(graph?.nodes.find(n=>n.id===current));
+    let bounds=null;
+    if(active){try{bounds=active.getBBox()}catch{}}
+    if(!bounds){bounds={x:0,y:0,width:graphRect().w,height:Math.min(120,graphRect().h)}}
+    const baseW=Math.max(440,Math.min(760,vision.clientWidth*0.85),bounds.width*1.23)/zoomFactor;
+    setCamera({x:bounds.x+bounds.width/2-baseW/2,y:bounds.y+bounds.height/2-(baseW*viewportAspect())/2+18,w:baseW});
+  }
+  function fitVisible(){
+    if(!svg)return;
+    const rect=graphRect(),ratio=viewportAspect(),w=Math.max(rect.w*1.10,rect.h*1.10/ratio);
+    setCamera({x:rect.x+rect.w/2-w/2,y:rect.y+rect.h/2-(w*ratio)/2,w});
+  }
+  function zoomAt(multiplier,px=vision.clientWidth/2,py=vision.clientHeight/2){
+    if(!camera)return;
+    const tx=clamp(px/Math.max(1,vision.clientWidth),0,1),ty=clamp(py/Math.max(1,vision.clientHeight),0,1);
+    const nw=clamp(camera.w/multiplier,90,Math.max(20000,graphRect().w*5));
+    setCamera({x:camera.x+camera.w*tx-nw*tx,y:camera.y+camera.h*ty-nw*viewportAspect()*ty,w:nw});
+    zoomFactor=clamp(zoomFactor*multiplier,0.1,12);
+  }
+  function panPixels(dx,dy){if(!camera)return;const scale=camera.w/Math.max(1,vision.clientWidth);setCamera({x:camera.x-dx*scale,y:camera.y-dy*scale,w:camera.w});}
+  vision.addEventListener('wheel',event=>{
+    if(mode!=='spotlight'||event.target.closest('.mf-camera-controls'))return;
+    event.preventDefault();
+    const rect=vision.getBoundingClientRect();
+    zoomAt(Math.exp(-event.deltaY*0.0018),event.clientX-rect.left,event.clientY-rect.top);
+  },{passive:false});
+  vision.addEventListener('pointerdown',event=>{
+    if(mode!=='spotlight'||event.button!==0||event.target.closest('.mf-camera-controls,.mf-overview-button'))return;
+    pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+    pointerStart={x:event.clientX,y:event.clientY,moved:false};
+    if(pointers.size===2){const arr=[...pointers.values()];pinchStart={distance:Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y)};}
+    vision.setPointerCapture(event.pointerId);
+  });
+  vision.addEventListener('pointermove',event=>{
+    const old=pointers.get(event.pointerId);if(!old)return;
+    const point={x:event.clientX,y:event.clientY};pointers.set(event.pointerId,point);
+    const dx=point.x-old.x,dy=point.y-old.y;
+    if(pointerStart && Math.hypot(point.x-pointerStart.x,point.y-pointerStart.y)>6){pointerStart.moved=true;suppressNodeClick=true;}
+    if(pointers.size===2){
+      const arr=[...pointers.values()],distance=Math.max(1,Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y));
+      const midpoint={x:(arr[0].x+arr[1].x)/2,y:(arr[0].y+arr[1].y)/2},rect=vision.getBoundingClientRect();
+      if(pinchStart)zoomAt(clamp(distance/Math.max(1,pinchStart.distance),0.5,2),midpoint.x-rect.left,midpoint.y-rect.top);
+      pinchStart={distance};
+    }else if(pointerStart?.moved)panPixels(dx,dy);
+  });
+  const release=event=>{pointers.delete(event.pointerId);if(pointers.size<2)pinchStart=null;if(!pointers.size)pointerStart=null;};
+  vision.addEventListener('pointerup',release);vision.addEventListener('pointercancel',release);
+  vision.addEventListener('click',event=>{if(suppressNodeClick){event.preventDefault();event.stopImmediatePropagation();suppressNodeClick=false;}},true);
+  vision.addEventListener('dblclick',event=>{if(event.target.closest('.mf-camera-controls,.mf-overview-button'))return;const r=vision.getBoundingClientRect();zoomAt(1.6,event.clientX-r.left,event.clientY-r.top);});
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const state = () => ({ current, path:[...path], mode, focusDepth, terminal: !!graph && !graph.edges.some(e=>e.start===current) });
+  const state = () => ({ current, path:[...path], mode, focusDepth, camera:camera&&({...camera}), terminal: !!graph && !graph.edges.some(e=>e.start===current) });
   const report = () => { if (typeof opts.onChange === 'function') opts.onChange(state()); };
   function paint() {
     if (destroyed || !graph) return;
@@ -509,42 +588,28 @@ async function createMermaidFocus(host, options = {}) {
   }
   function spotlight() {
     if (!graph || mode !== 'spotlight') return;
-    const previousScrollTop=vision.scrollTop;
     if (overview) {
       const original=opts.svg || builtinSvg;
       if(!original){graphMeta.textContent='Overview unavailable without an SVG.';return;}
       visual.innerHTML=typeof original==='string'?original:'';
-      svg=visual.querySelector('svg');
-      if (!svg)return;
-      // True full graph in a scrollable 2D viewport, not a zoomed-out thumbnail.
+      svg=visual.querySelector('svg');if(!svg)return;
       const base=(svg.getAttribute('viewBox')||'0 0 960 1200').split(/\s+/).map(Number);
-      const width=base[2]||960,height=base[3]||1200;
-      svg.style.width=width+'px';svg.style.height=height+'px';
-      vision.style.overflow='auto';
-      graphMeta.textContent=`Full overview · ${graph.nodes.length} nodes · ${graph.edges.length} decision paths. Scroll to explore.`;
-      requestAnimationFrame(()=>{
-        if(!overview || !svg)return;
-        const active=svgNode(graph.nodes.find(n=>n.id===current));
-        if(active){
-          const b=nodeBox(active,svg);
-          if(b)vision.scrollTo({left:Math.max(0,b.x+b.w/2-vision.clientWidth/2),top:Math.max(0,b.y+b.h/2-vision.clientHeight/2),behavior:'instant'});
-        }
-      });
+      viewSource={x:base[0]||0,y:base[1]||0,w:base[2]||960,h:base[3]||1200};
+      graphMeta.textContent=`Full overview · ${graph.nodes.length} nodes · ${graph.edges.length} decision paths · pan and zoom to explore.`;
     } else {
       const local=focusSvg(graph,current,focusDepth);
       visual.innerHTML=local.svg;
       svg=visual.querySelector('svg');
-      svg.style.width='100%';svg.style.height='auto';
-      vision.style.overflow='auto';
-      graphMeta.textContent=`${focusDepth} ${focusDepth===1?'hop':'hops'} from current · ${local.count} nodes · ${local.connections} arrows. Tap a next node or choose an answer below.`;
+      viewSource={x:0,y:0,w:local.width,h:local.height};
+      graphMeta.textContent=`${focusDepth} ${focusDepth===1?'hop':'hops'} from current · ${local.count} nodes · ${local.connections} arrows · drag, zoom, or tap an adjacent node.`;
       for(const item of svg.querySelectorAll('.mf-focus-node[role="button"]')){
         const target=item.getAttribute('data-node-id');
-        item.addEventListener('click',()=>api.next(target));
+        item.addEventListener('click',()=>{if(!suppressNodeClick)api.next(target)});
         item.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();api.next(target);}});
       }
-      visual.animate?.([{opacity:0.65,transform:'translateY(12px)'},{opacity:1,transform:'translateY(0)'}],{duration:reduceMotion?0:Math.max(120,Math.min(500,opts.duration)),easing:'ease-out'});
     }
-    if(previousScrollTop>0 || overview) vision.scrollTop=0;
+    svg.style.width='100%';svg.style.height='100%';
+    fitCurrent(false);
   }
   let originalBox = null;
   async function renderSpotlight() {
@@ -571,7 +636,7 @@ async function createMermaidFocus(host, options = {}) {
       svg.removeAttribute('width');svg.removeAttribute('height');
       svgReady=true;
       if (!resizeObserver && 'ResizeObserver' in window) {
-        resizeObserver=new ResizeObserver(() => {if (svg && mode==='spotlight') spotlight();});
+        resizeObserver=new ResizeObserver(() => {if (svg && mode==='spotlight' && camera) {const center={x:camera.x+camera.w/2,y:camera.y+camera.h/2};setCamera({x:center.x-camera.w/2,y:center.y-camera.w*viewportAspect()/2,w:camera.w});}});
         resizeObserver.observe(vision);
       }
     })().finally(()=>{svgRenderPromise=null;});
@@ -580,6 +645,9 @@ async function createMermaidFocus(host, options = {}) {
   const api = {
     getState: state,
     getGraph: () => graph && ({ nodes: graph.nodes.map(n=>({...n})), edges: graph.edges.map(e=>({...e})) }),
+    getCamera: () => camera&&({...camera}),
+    zoomIn(){zoomAt(1.28)}, zoomOut(){zoomAt(1/1.28)},
+    fitNode(){fitCurrent(true)}, fitAll(){fitVisible()},
     toggleOverview() { overview = !overview; paint(); report(); return overview; },
     setFocusDepth(distance) {
       focusDepth=Math.max(1,Math.min(4,Number(distance)||1));
@@ -604,7 +672,7 @@ async function createMermaidFocus(host, options = {}) {
     async setSource(newSource, suppliedGraph = null) {
       source = newSource;
       if (animation) cancelAnimationFrame(animation); animation=null;
-      graph = null; svg = null; svgReady = false; originalBox=null;lastBox=null;overview=false;builtinSvg=null;visual.replaceChildren();
+      graph = null; svg = null; svgReady = false; originalBox=null;lastBox=null;overview=false;builtinSvg=null;camera=null;zoomFactor=1;visual.replaceChildren();
       body.replaceChildren(elt('div','mf-loading','Reading flowchart…'));
       try {
         if (suppliedGraph || opts.graph) {
