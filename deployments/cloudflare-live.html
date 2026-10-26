@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Mermaid Focus — Interactive Emotion Regulation</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172435;background:#f4f7fc}
+    *{box-sizing:border-box}body{margin:0}header{padding:16px max(18px,calc((100vw - 1130px)/2));background:#101b30;color:white}
+    h1{margin:0;font-size:clamp(26px,4vw,42px);letter-spacing:-.05em}header p{color:#c4d3e9;margin:6px 0 0;max-width:700px}
+    main{max-width:1166px;margin:22px auto;padding:0 18px 40px;display:grid;grid-template-columns:1fr;gap:15px}
+    #wizard{display:block;min-width:0}.editor{background:white;border:1px solid #dce2ec;border-radius:14px;padding:15px}
+    details summary{cursor:pointer;font-size:14px;font-weight:700}.editor-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0;flex-wrap:wrap}
+    textarea{font:13px/1.55 ui-monospace,Menlo,monospace;width:100%;min-height:330px;resize:vertical;border:1px solid #c9d4e2;border-radius:9px;padding:13px}
+    button{padding:10px 16px;border-radius:9px;border:0;background:#245fdb;color:white;font:inherit;font-weight:650;cursor:pointer}
+    .muted{font-size:13px;color:#64748b}.error{color:#b91c1c;font-size:13px}footer{font-size:13px;color:#64748b;line-height:1.6}
+    footer code{background:#e7edf6;padding:2px 4px;border-radius:4px}
+    .notice{background:#e6f7ec;color:#166534;border-radius:10px;padding:12px 15px;font-size:13px;line-height:1.5}
+  </style>
+</head>
+<body>
+  <header><h1>Mermaid Focus</h1><p>The complete emotion-regulation flowchart, one decision at a time. Zoom between SVG nodes or switch to Wizard to remove the drawing.</p></header>
+  <main>
+    
+    <div id="wizard" aria-label="Interactive flowchart"></div>
+    <section class="editor">
+      <details><summary>Edit Mermaid source (the original flowchart is preloaded)</summary>
+        <div class="editor-actions"><button id="apply">Load flowchart</button><span id="status" role="status" class="muted">Original Mermaid flowchart loaded.</span></div>
+        <textarea spellcheck="false" id="source"></textarea>
+      </details>
+    </section>
+    <footer>Hosted demo. Everything needed to run this flowchart is embedded in this page. The small built-in Mermaid flowchart parser handles the sample and common node/edge syntax offline. More advanced Mermaid features need the official Mermaid engine and an internet connection. Dotted association edges (ABC) are visible in Overview but are not answer choices.</footer>
+  </main>
+  <script>
+/* Inlined browser distribution: the demo does not import local ES modules. */
+(function(){
+/**
+ * Mermaid Focus v0.2.0 — standalone, CDN-hostable ES module.
+ * Copyright (c) 2026. MIT.
+ *
+ * Turns Mermaid FLOWCHARTS into progressive-disclosure wizard and spotlight views.
+ * Common Mermaid flowcharts run completely offline; advanced syntax lazily
+ * loads the official Mermaid renderer from jsDelivr unless supplied.
+ * No build step, no framework dependency, no stylesheet to install.
+ *
+ * Public API:
+ *   const app = await createMermaidFocus(element, { source, mode: 'wizard' | 'spotlight' });
+ *   app.next(nodeId); app.back(); app.restart(); app.setMode(mode);
+ *   await app.setSource(source); app.getState(); app.destroy();
+ *
+ * Mermaid's diagram.db interface is internal/deprecated and may change.
+ * If a future version removes it, the caller can instead pass a pre-parsed
+ * graph as { nodes:[{id,label,domId?}], edges:[{start,end,label?}] }.
+ */
+
+const VERSION = '0.3.0';
+const DEFAULT_MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.esm.min.mjs';
+let mermaidPromise;
+let uniqueId = 0;
+let parseQueue = Promise.resolve();
+const waitTurn = (work) => {
+  const next = parseQueue.catch(() => {}).then(work);
+  parseQueue = next.catch(() => {});
+  return next;
+};
+
+function asText(value) {
+  const input = String(value ?? '');
+  // Mermaid node labels can contain HTML-style line breaks and entities.
+  const html = input.replace(/<br\s*\/?\s*>/gi, '\n');
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  return (parsed.body.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+}
+function normalizeGraph(graph) {
+  const rawNodes = graph.nodes instanceof Map ? [...graph.nodes.values()] : graph.nodes || [];
+  const nodes = rawNodes.map(n => ({ id: String(n.id), label: asText(n.label ?? n.text ?? n.id), domId: n.domId || null, type: n.type || null }));
+  const ids = new Set(nodes.map(n => n.id));
+  if (!nodes.length) throw Error('Flowchart contains no nodes.');
+  if (ids.size !== nodes.length) throw Error('Duplicate node IDs.');
+  const edges = (graph.edges || []).map((e, i) => ({
+    start: String(e.start ?? e.source), end: String(e.end ?? e.target),
+    label: asText(e.label ?? e.text ?? ''), id: e.id || `edge-${i}`,
+  }));
+  for (const e of edges) {
+    if (!ids.has(e.start) || !ids.has(e.end)) throw Error(`Edge ${e.start} -> ${e.end} references an unknown node.`);
+  }
+  return { nodes, edges };
+}
+function findStart(graph, explicit) {
+  if (explicit != null) {
+    if (!graph.nodes.some(n => n.id === explicit)) throw Error(`Unknown start node: ${explicit}`);
+    return explicit;
+  }
+  // Prefer an explicitly named Start node, even when a retry loop returns to it.
+  if (graph.nodes.some(n=>n.id==='Start')) return 'Start';
+  const inbound = new Set(graph.edges.map(e => e.end));
+  return graph.nodes.find(n => !inbound.has(n.id))?.id || graph.nodes[0].id;
+}
+async function defaultMermaid() {
+  if (!mermaidPromise) mermaidPromise = import(DEFAULT_MERMAID_URL).then(m => m.default || m);
+  return mermaidPromise;
+}
+function elt(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+function btn(text, onClick, cls = '') {
+  const el = elt('button', cls, text);
+  el.type = 'button';
+  el.addEventListener('click', onClick);
+  return el;
+}
+function nodeBox(node, svg) {
+  if (!node || typeof node.getBBox !== 'function') return null;
+  try {
+    const b = node.getBBox();
+    const sm = node.getScreenCTM();
+    const rm = svg.getScreenCTM();
+    if (!sm || !rm) return null;
+    const m = rm.inverse().multiply(sm);
+    const xy = [[b.x,b.y],[b.x+b.width,b.y],[b.x,b.y+b.height],[b.x+b.width,b.y+b.height]]
+      .map(([x,y]) => new DOMPoint(x,y).matrixTransform(m));
+    const xs = xy.map(p => p.x), ys = xy.map(p => p.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs)-Math.min(...xs), h: Math.max(...ys)-Math.min(...ys) };
+  } catch { return null; }
+}
+function union(boxes) {
+  const bb = boxes.filter(Boolean);
+  if (!bb.length) return null;
+  const x = Math.min(...bb.map(b => b.x)), y = Math.min(...bb.map(b => b.y));
+  return { x, y, w: Math.max(...bb.map(b => b.x+b.w)) - x, h: Math.max(...bb.map(b => b.y+b.h)) - y };
+}
+/**
+ * Small, network-free compiler for common Mermaid flowcharts. It intentionally
+ * supports a subset: one node or one edge per line, labeled --> edges,
+ * rounded/box/diamond nodes, plus dotted annotation edges and style lines.
+ * For advanced Mermaid syntax, use the full Mermaid engine on a hosted page.
+ */
+function offlineFlowchart(source) {
+  if (!/^\s*(?:flowchart|graph)\s+(?:TB|TD|BT|LR|RL)\b/im.test(source)) {
+    throw Error('Expected a Mermaid flowchart (e.g. flowchart TD).');
+  }
+  const lines = source.replace(/\r\n?/g, '\n').split('\n');
+  const nodes = new Map(), edges = [], decorations = [];
+  const ensure = id => {
+    if (!nodes.has(id)) nodes.set(id, {id, label:id, type:'box'});
+    return nodes.get(id);
+  };
+  function definition(fragment) {
+    const m = /^\s*([\w-]+)\s*(\{\s*"([\s\S]*?)"\s*\}|\[\s*"([\s\S]*?)"\s*\]|\(\s*"([\s\S]*?)"\s*\)|\{([^{}]*)\}|\[([^\]]*)\]|\(([^()]*)\))\s*;?\s*$/.exec(fragment);
+    if (!m) return false;
+    const n = ensure(m[1]);
+    n.label = asText(m.slice(3).find(x=>x !== undefined) || m[1]);
+    n.type = fragment.slice(m[1].length).trim().startsWith('{') ? 'decision' : 'box';
+    return true;
+  }
+  let sawHeader = false;
+  for (const original of lines) {
+    const line = original.trim();
+    if (!line || /^%%/.test(line)) continue;
+    if (/^(?:flowchart|graph)\s+(?:TB|TD|BT|LR|RL)\b/i.test(line)) { sawHeader=true;continue; }
+    if (/^(?:style|classDef|class|linkStyle|click|subgraph|end|direction|accTitle|accDescr)\b/.test(line)) continue;
+    const edge = /^([\w-]+)\s*(-->|-\.->|==>|---)\s*(?:\|([^|]*)\|\s*)?([\w-]+)\s*(.*)$/.exec(line);
+    if (edge) {
+      ensure(edge[1]);
+      ensure(edge[4]);
+      if (edge[5]?.trim()) definition(edge[4]+edge[5]);
+      const record={start:edge[1],end:edge[4],label:asText(edge[3]||'').replace(/^"|"$/g,'')};
+      (edge[2]==='-.->' ? decorations : edges).push(record);
+      continue;
+    }
+    if (definition(line)) continue;
+    // Don't silently present a misleading flowchart when the subset parser
+    // sees syntax it can't understand.
+    throw Error(`Unsupported flowchart syntax: ${line.slice(0,110)}. Use the hosted Mermaid engine for advanced diagrams.`);
+  }
+  if (!sawHeader || nodes.size===0) throw Error('No nodes found.');
+  const graph={nodes:[...nodes.values()],edges};
+  return {graph,svg:offlineSvg(graph,decorations)};
+}
+function offlineSvg(graph,decorations=[]) {
+  // Simple layered layout; ideal for navigation. This isn't meant to reproduce
+  // Mermaid's dagre layout, which requires its full rendering engine.
+  const nodes=graph.nodes, edges=graph.edges;
+  const idMap = new Map(nodes.map(n=>[n.id,n]));
+  const start=nodes.find(n=>n.id==='Start')?.id || nodes[0].id;
+  const depth = new Map([[start,0]]), queue=[start];
+  while(queue.length) {
+    const id=queue.shift(), d=depth.get(id);
+    for(const e of edges.filter(e=>e.start===id)) {
+      if (!depth.has(e.end)) { depth.set(e.end,d+1);queue.push(e.end); }
+    }
+  }
+  let bottom=Math.max(...depth.values(),0);
+  for(const n of nodes) if(!depth.has(n.id)) depth.set(n.id,++bottom);
+  const rows=new Map();
+  for(const n of nodes){const d=depth.get(n.id);if(!rows.has(d))rows.set(d,[]);rows.get(d).push(n);}
+  const maxRow=Math.max(1,...[...rows.values()].map(r=>r.length));
+  const nodeWidth=290, rowWidth=Math.max(960,maxRow*360+120), rowHeight=158;
+  const totalHeight=(Math.max(...rows.keys())+1)*rowHeight+120;
+  const positions=new Map();
+  for(const [d,group] of rows){
+    group.forEach((n,i)=>positions.set(n.id,{x:rowWidth/2 + (i-(group.length-1)/2)*355,y:65+d*rowHeight,w:nodeWidth,h:106}));
+  }
+  const escape = s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  function linesOf(label){
+    const pieces=String(label).split(/\n/), result=[];
+    for (const part of pieces) {
+      let line='';
+      for(const word of part.trim().split(/\s+/)){
+        if (!word) continue;
+        if(line.length+word.length > 29 && line){result.push(line);line=word;} else line+=(line?' ':'')+word;
+      }
+      result.push(line);
+    }
+    return result.slice(0,8);
+  }
+  const markerId = 'mf-arrow-'+(++uniqueId);
+  const out=[`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${rowWidth} ${totalHeight}" preserveAspectRatio="xMidYMid meet" aria-label="Flowchart">`,
+    `<defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker></defs>`];
+  for(const [i,e] of [...edges,...decorations].entries()){
+    const a=positions.get(e.start),b=positions.get(e.end); if(!a||!b)continue;
+    const upward=b.y <= a.y;
+    const sx=a.x,sy=upward?a.y:a.y+a.h/2,tx=b.x,ty=upward?b.y+b.h/2:b.y;
+    const midY=(sy+ty)/2;
+    const path=`M ${sx} ${sy} C ${sx} ${midY}, ${tx} ${midY}, ${tx} ${ty}`;
+    const dotted=i>=edges.length;
+    out.push(`<g class="edge"><path class="flowchart-link" d="${path}" stroke="${dotted?'#cbd5e1':'#94a3b8'}" stroke-width="2" stroke-dasharray="${dotted?'6 6':'none'}" fill="none" marker-end="url(#${markerId})"/>`);
+    if(e.label){const lx=(sx+tx)/2,ly=midY-5;out.push(`<text x="${lx}" y="${ly}" font-size="12" fill="#475569" text-anchor="middle" paint-order="stroke" stroke="#f8fafc" stroke-width="5">${escape(e.label)}</text>`);}
+    out.push('</g>');
+  }
+  for(const n of nodes) {
+    const p=positions.get(n.id), lines=linesOf(n.label);
+    const h=Math.max(p.h,40+lines.length*20), y=p.y+(p.h-h)/2;
+    const id='flowchart-'+n.id+'-'+nodes.indexOf(n);
+    const isQuestion=n.type==='decision';
+    out.push(`<g class="node" id="${escape(id)}" data-node-id="${escape(n.id)}">`);
+    out.push(`<rect x="${p.x-p.w/2}" y="${y}" width="${p.w}" height="${h}" rx="${isQuestion?22:12}" fill="${isQuestion?'#e0f2fe':'#ffffff'}" stroke="${isQuestion?'#0284c7':'#94a3b8'}" stroke-width="2"/>`);
+    const firstY=y+h/2-((lines.length-1)*20)/2+5;
+    out.push(`<text x="${p.x}" y="${firstY}" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#172435" font-weight="${isQuestion?650:550}">`);
+    lines.forEach((line,i)=>out.push(`<tspan x="${p.x}" dy="${i?20:0}">${escape(line)}</tspan>`));
+    out.push('</text></g>');
+  }
+  out.push('</svg>');
+  return out.join('');
+}
+
+const CSS = `
+:host { display:block; color-scheme: light; --mf-ink:#172435; --mf-muted:#53647b; --mf-border:#dce2ec; --mf-accent:#2563eb; --mf-bg:#fff; --mf-well:#f5f7fb; font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+* { box-sizing:border-box; }
+.mf-shell { color:var(--mf-ink); background:var(--mf-bg); border:1px solid var(--mf-border); border-radius:18px; overflow:hidden; min-height:320px; }
+.mf-head { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid var(--mf-border); flex-wrap:wrap; }
+.mf-brand { font-size:15px; font-weight:800; letter-spacing:-.03em; margin-right:auto; }
+.mf-modes { display:flex; gap:3px; padding:3px; background:var(--mf-well); border-radius:12px; }
+.mf-modes button { background:transparent; border:0; padding:8px 12px; border-radius:9px; font-size:12px; color:var(--mf-muted); cursor:pointer; font-weight:650; }
+.mf-modes button[aria-pressed="true"] { background:#fff; box-shadow:0 1px 4px #17243522; color:var(--mf-accent); }
+.mf-progress { height:3px; background:var(--mf-accent); }
+.mf-body { padding:clamp(20px,5vw,42px); max-width:870px; margin:auto; }
+.mf-crumbs { color:var(--mf-muted); text-transform:uppercase; letter-spacing:.12em; font-weight:750; font-size:11px; }
+.mf-question { margin:20px 0 27px; font-size:clamp(24px,4.5vw,36px); line-height:1.23; font-weight:760; letter-spacing:-.04em; white-space:pre-line; }
+.mf-results { display:grid; gap:10px; max-width:620px; }
+.mf-answer { display:flex; align-items:center; justify-content:space-between; gap:14px; min-height:56px; padding:13px 18px; font-family:inherit; text-align:left; font-size:16px; font-weight:620; border:1px solid var(--mf-border); border-radius:12px; background:white; color:var(--mf-ink); cursor:pointer; transition:border-color .15s,background .15s, transform .15s; }
+.mf-answer:hover,.mf-answer:focus-visible { border-color:var(--mf-accent); background:#eff6ff; outline:none; transform:translateY(-1px); }
+.mf-answer span:last-child { color:var(--mf-accent); font-size:23px; }
+.mf-done { font-size:15px; padding:14px 17px; border-left:3px solid #16a34a; background:#f0fdf4; border-radius:6px; }
+.mf-bottom { padding:12px 18px; display:flex; align-items:center; gap:9px; justify-content:space-between; border-top:1px solid var(--mf-border); }
+.mf-bottom button { border:1px solid var(--mf-border); background:white; color:var(--mf-ink); border-radius:9px; padding:8px 13px; font:inherit; font-size:13px; cursor:pointer; }
+.mf-bottom button:disabled { cursor:default; opacity:.4; }
+.mf-counter { color:var(--mf-muted); font-size:12px; }
+.mf-spotlight[hidden] { display:none !important; }
+.mf-spotlight { background:var(--mf-well); height:clamp(240px,43vw,360px); margin:0; overflow:hidden; position:relative; border-bottom:1px solid var(--mf-border); }
+.mf-spotlight > div:first-child { width:100%;height:100%; }
+.mf-spotlight svg { display:block; width:100%; height:100%; max-width:none !important; transition:opacity .22s; }
+.mf-spotlight.mf-overview svg { cursor:zoom-in; }
+.mf-spotlight .node, .mf-spotlight .edgePath, .mf-spotlight .edgeLabel, .mf-spotlight .flowchart-link { transition:opacity .2s; }
+.mf-spotlight .mf-hidden { opacity:0 !important; pointer-events:none !important; }
+.mf-loading,.mf-error { padding:30px; background:var(--mf-well); font-size:14px; white-space:pre-wrap; }
+.mf-error { color:#b91c1c; }
+.mf-overview-button { position:absolute; top:10px; right:12px; border:1px solid var(--mf-border); background:#ffffffed; padding:5px 10px; border-radius:6px; font:600 12px system-ui; color:var(--mf-ink); cursor:pointer; }
+.mf-spotlabel { position:absolute; top:10px; left:12px; font-size:11px; letter-spacing:.07em; text-transform:uppercase; font-weight:700; color:var(--mf-muted); background:#fffdf4e6; border-radius:6px; padding:5px 8px; pointer-events:none; }
+@media (prefers-reduced-motion: reduce) { *,*::before,*::after { transition:none !important; animation:none !important; } }
+`;
+
+async function createMermaidFocus(host, options = {}) {
+  if (typeof host === 'string') host = document.querySelector(host);
+  if (!(host instanceof Element)) throw new TypeError('createMermaidFocus: host must be an Element or selector.');
+  const opts = { mode:'spotlight', neighbors:false, duration:540, ...options };
+  if (opts.mode !== 'wizard' && opts.mode !== 'spotlight') throw Error('Mode must be "wizard" or "spotlight"');
+  const root = host.attachShadow({ mode:'open' });
+  const style = elt('style'); style.textContent = CSS; root.append(style);
+  const shell = elt('section', 'mf-shell'); root.append(shell);
+  const header = elt('div', 'mf-head'); shell.append(header);
+  const brand = elt('div', 'mf-brand', opts.title || '◈ Mermaid Focus'); header.append(brand);
+  const modes = elt('div', 'mf-modes'); header.append(modes);
+  const wizardButton = btn('Wizard', () => api.setMode('wizard'));
+  const spotlightButton = btn('Spotlight', () => api.setMode('spotlight'));
+  modes.append(wizardButton, spotlightButton);
+  const bar = elt('div', 'mf-progress'); shell.append(bar);
+  const vision = elt('div', 'mf-spotlight'); vision.hidden = true;
+  const visual = elt('div'); vision.append(visual);
+  vision.append(elt('div','mf-spotlabel','Focused diagram'));
+  const overviewButton = btn('Overview', () => api.toggleOverview(), 'mf-overview-button');
+  vision.append(overviewButton);
+  shell.append(vision);
+  const body = elt('main','mf-body'); shell.append(body);
+  const footer = elt('footer', 'mf-bottom'); shell.append(footer);
+  const backButton = btn('← Back', () => api.back()); footer.append(backButton);
+  const count = elt('span','mf-counter'); footer.append(count);
+  const restartButton = btn('↻ Restart', () => api.restart()); footer.append(restartButton);
+
+  let graph = null, start = null, current = null, path = [], renderer = opts.mermaid || null, svg = null;
+  let svgReady = false, destroyed = false, source = opts.source ?? null, mode = opts.mode;
+  let builtinSvg = null;
+  let overview = false, animation = null, lastBox = null, resizeObserver = null, svgRenderPromise = null;
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const state = () => ({ current, path:[...path], mode, terminal: !!graph && !graph.edges.some(e=>e.start===current) });
+  const report = () => { if (typeof opts.onChange === 'function') opts.onChange(state()); };
+  function paint() {
+    if (destroyed || !graph) return;
+    const item = graph.nodes.find(n => n.id === current);
+    const choices = graph.edges.filter(e => e.start === current);
+    body.replaceChildren();
+    body.append(elt('div','mf-crumbs',`Step ${path.length + 1} · ${choices.length ? `${choices.length} ${choices.length === 1 ? 'path' : 'paths'}` : 'Outcome'}`));
+    const heading = elt('h2','mf-question',item.label || item.id);
+    heading.setAttribute('aria-live','polite');
+    body.append(heading);
+    if (choices.length) {
+      const group = elt('div','mf-results'); group.setAttribute('role','group'); group.setAttribute('aria-label', 'Choose the next step');
+      for (const e of choices) {
+        const target = graph.nodes.find(n => n.id === e.end);
+        const choice = btn('', () => api.next(e.end), 'mf-answer');
+        choice.append(elt('span','',e.label || (choices.length === 1 ? 'Continue' : target.label || target.id)),elt('span','','→'));
+        choice.setAttribute('aria-label',`${e.label || target.label || 'Continue'}: go to ${target.label}`);
+        group.append(choice);
+      }
+      body.append(group);
+    } else {
+      body.append(elt('div', 'mf-done','End of this path. Go back to reconsider an answer, or restart.'));
+    }
+    backButton.disabled = path.length === 0;
+    count.textContent = `${path.length} ${path.length === 1 ? 'decision' : 'decisions'} made`;
+    wizardButton.setAttribute('aria-pressed',String(mode === 'wizard'));
+    spotlightButton.setAttribute('aria-pressed',String(mode === 'spotlight'));
+    vision.hidden = mode !== 'spotlight';
+    overviewButton.textContent = overview ? 'Focus' : 'Overview';
+    vision.classList.toggle('mf-overview',overview);
+    if (mode === 'spotlight' && svg) spotlight();
+    // Cyclic decision trees have no meaningful percentage-complete value.
+  }
+  function svgNode(item) {
+    if (!svg || !item) return null;
+    if (opts.nodeMap?.[item.id]) {
+      const custom = svg.querySelector(opts.nodeMap[item.id]);
+      if (custom) return custom;
+    }
+    const groups = [...svg.querySelectorAll('g.node, g[data-node-id], g[data-id], g[id]')];
+    const candidates = [item.domId, item.id, `flowchart-${item.id}`].filter(Boolean);
+    const exact = groups.find(n => candidates.includes(n.id) ||
+      n.getAttribute('data-node-id') === item.id || n.getAttribute('data-id') === item.id ||
+      n.getAttribute('data-node') === item.id);
+    if (exact) return exact;
+    const prefixed = groups.find(n => n.id?.startsWith(`flowchart-${item.id}-`) ||
+      n.id?.startsWith(`node-${item.id}-`) || n.id?.endsWith(`-${item.id}`));
+    if (prefixed) return prefixed;
+    // Best-effort Ondine/SVG matching when a compiler does not preserve the node ID.
+    // Only match uniquely to avoid focusing on the wrong node.
+    const named = groups.filter(n => asText(n.textContent) === item.label);
+    return named.length === 1 ? named[0] : null;
+  }
+  function svgBounds() {
+    const base = svg.viewBox.baseVal;
+    if (base?.width > 0 && base?.height > 0) return {x:base.x,y:base.y,w:base.width,h:base.height};
+    const b = svg.getBBox();
+    return {x:b.x,y:b.y,w:Math.max(1,b.width),h:Math.max(1,b.height)};
+  }
+  function applyView(box) {
+    svg.setAttribute('viewBox',`${box.x} ${box.y} ${box.w} ${box.h}`);
+    svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+  }
+  function zoomTo(target) {
+    if (!target) return;
+    if (animation) cancelAnimationFrame(animation);
+    const from = lastBox || svgBounds();
+    // Respect motion preferences and allow a zero-duration animation.
+    if (reduceMotion || opts.duration <= 0) { applyView(target); lastBox=target; return; }
+    const startTime=performance.now(), duration=Math.max(0,Number(opts.duration)||540);
+    function frame(now) {
+      if (destroyed || !svg) return;
+      const t = Math.max(0, Math.min(1,(now-startTime)/duration));
+      const ease = t*t*(3-2*t);
+      const b = {
+        x:from.x+(target.x-from.x)*ease, y:from.y+(target.y-from.y)*ease,
+        w:from.w+(target.w-from.w)*ease, h:from.h+(target.h-from.h)*ease,
+      };
+      applyView(b);
+      lastBox=b;
+      animation = t<1 ? requestAnimationFrame(frame) : null;
+    }
+    animation=requestAnimationFrame(frame);
+  }
+  function spotlight() {
+    if (!svg) return;
+    if (!overview) {
+      vision.style.height='';
+      vision.style.overflow='hidden';
+      visual.style.width='100%';
+      visual.style.height='100%';
+      svg.style.width='100%';
+      svg.style.height='100%';
+    }
+    const relevant = new Set([current]);
+    if (opts.neighbors) graph.edges.filter(e=>e.start===current).forEach(e=>relevant.add(e.end));
+    for (const n of graph.nodes) {
+      const el=svgNode(n);
+      if (el) {
+        el.classList.toggle('mf-hidden',!overview && !relevant.has(n.id));
+        el.classList.toggle('mf-current', n.id===current && !overview);
+      }
+    }
+    // Fading all the diagram's edges avoids cross-branch distraction even if a
+    // renderer's edge classes or identifiers differ. Choices stay as HTML buttons.
+    for (const el of svg.querySelectorAll('.edgeLabel,.edgePath,.edgePaths path,.flowchart-link,.edge,.edge-label')) {
+      el.classList.toggle('mf-hidden', !overview);
+    }
+    if (overview) {
+      if (animation) { cancelAnimationFrame(animation); animation=null; }
+      vision.style.height='min(73vh, 740px)';
+      vision.style.overflow='auto';
+      const mapWidth = Math.max(originalBox.w, 860);
+      const mapHeight = Math.max(originalBox.h, 500);
+      visual.style.width=mapWidth+'px';
+      visual.style.height=mapHeight+'px';
+      svg.style.width=mapWidth+'px';
+      svg.style.height=mapHeight+'px';
+      applyView(originalBox);
+      lastBox=originalBox;
+      requestAnimationFrame(() => {
+        if (!overview || !svg) return;
+        const active=svgNode(graph.nodes.find(n=>n.id===current));
+        const box=nodeBox(active,svg);
+        if (box) vision.scrollTo({left:Math.max(0,box.x+box.w/2-vision.clientWidth/2),top:Math.max(0,box.y+box.h/2-vision.clientHeight/2),behavior:'instant'});
+      });
+      return;
+    }
+    const selected = [...relevant].map(id=>svgNode(graph.nodes.find(n=>n.id===id)));
+    const b = union(selected.map(n=>nodeBox(n,svg)));
+    if (!b) {
+      // A pre-rendered SVG must preserve a node ID or an unambiguous node label.
+      if (!svgNode(graph.nodes.find(n=>n.id===current))) {
+        visual.setAttribute('title','No SVG node matched the current Mermaid graph node.');
+      }
+      return;
+    }
+    const ar = Math.max(.35, vision.clientWidth / Math.max(vision.clientHeight, 1));
+    const pad = opts.neighbors ? 26 : 42;
+    let w=Math.max(150,b.w+pad*2),h=Math.max(95,b.h+pad*2);
+    // Expand the box to the viewport aspect ratio to avoid letterboxing and
+    // keep the focused node comfortably legible on narrow phones.
+    if (w/h > ar) h=w/ar; else w=h*ar;
+    const target={x:b.x+b.w/2-w/2,y:b.y+b.h/2-h/2,w,h};
+    zoomTo(target);
+  }
+  let originalBox = null;
+  async function renderSpotlight() {
+    if (svgReady) return;
+    if (svgRenderPromise) return svgRenderPromise;
+    svgRenderPromise = (async () => {
+      if (opts.svg || builtinSvg) {
+        // Trust only precompiled SVG you control; never feed arbitrary unsanitized SVG.
+        const input = opts.svg ? (typeof opts.svg === 'function' ? await opts.svg() : opts.svg) : builtinSvg;
+        visual.innerHTML = input;
+      } else {
+        if (!source) throw Error('For Spotlight, provide Mermaid source or a compiled SVG.');
+        if (!renderer) renderer = await defaultMermaid();
+        if (typeof renderer.render !== 'function') throw Error('Mermaid renderer must implement render(id, source).');
+        const rendered = await waitTurn(() => renderer.render(`mf-svg-${++uniqueId}`,source));
+        if (destroyed) return;
+        visual.innerHTML=rendered.svg;
+      }
+      svg=visual.querySelector('svg');
+      if (!svg) throw Error('Diagram renderer produced no SVG.');
+      svg.setAttribute('role','img');
+      svg.setAttribute('aria-label','Focused flowchart. Choose an answer below to move to the next step.');
+      originalBox=svgBounds();
+      svg.removeAttribute('width');svg.removeAttribute('height');
+      svgReady=true;
+      if (!resizeObserver && 'ResizeObserver' in window) {
+        resizeObserver=new ResizeObserver(() => {if (svg && mode==='spotlight') spotlight();});
+        resizeObserver.observe(vision);
+      }
+    })().finally(()=>{svgRenderPromise=null;});
+    return svgRenderPromise;
+  }
+  const api = {
+    getState: state,
+    getGraph: () => graph && ({ nodes: graph.nodes.map(n=>({...n})), edges: graph.edges.map(e=>({...e})) }),
+    toggleOverview() { overview = !overview; paint(); report(); return overview; },
+    next(id) {
+      if (!graph || !graph.edges.some(e=>e.start===current && e.end===id)) return false;
+      path.push(current); current = id; paint(); report(); return true;
+    },
+    back() { if (!path.length) return false; current = path.pop(); paint(); report(); return true; },
+    restart() { if (!graph) return; path=[];current=start;paint();report(); },
+    async setMode(nextMode) {
+      if (nextMode !== 'wizard' && nextMode !== 'spotlight') throw Error('Unknown mode');
+      mode = nextMode; paint();
+      if (mode === 'spotlight' && !svgReady && (source || opts.svg)) {
+        vision.hidden = false; visual.textContent = 'Preparing diagram…';
+        try { await renderSpotlight(); paint(); } catch(err) { visual.replaceChildren(elt('div','mf-error',`Spotlight unavailable: ${err.message}`)); }
+      }
+      report();
+    },
+    async setSource(newSource, suppliedGraph = null) {
+      source = newSource;
+      if (animation) cancelAnimationFrame(animation); animation=null;
+      graph = null; svg = null; svgReady = false; originalBox=null;lastBox=null;overview=false;builtinSvg=null;visual.replaceChildren();
+      body.replaceChildren(elt('div','mf-loading','Reading flowchart…'));
+      try {
+        if (suppliedGraph || opts.graph) {
+          graph = normalizeGraph(suppliedGraph || opts.graph);
+        } else {
+          if (!source?.trim()) throw Error('Provide a Mermaid flowchart source or a graph.');
+          if (!/^\s*(?:---[\s\S]*?---\s*)?(?:flowchart|graph)\s+(?:TB|TD|BT|LR|RL)\b/i.test(source)) {
+            throw Error('Only Mermaid flowchart/graph diagrams are supported. Other diagram types do not define wizard branches.');
+          }
+          if (!renderer && opts.engine !== 'mermaid') {
+            try {
+              const built = offlineFlowchart(source);
+              graph = normalizeGraph(built.graph);
+              builtinSvg = built.svg;
+            } catch (error) {
+              if (opts.engine === 'builtin') throw error;
+              // Fall back to official Mermaid when a diagram exceeds the
+              // built-in subset. This path requires a network connection.
+            }
+          }
+          if (!graph) {
+          if (!renderer) renderer = await defaultMermaid();
+          if (typeof renderer.initialize === 'function') renderer.initialize({ startOnLoad:false, securityLevel:'strict', flowchart:{ htmlLabels:false } });
+          const raw = await waitTurn(async () => {
+            const fn = renderer.mermaidAPI?.getDiagramFromText || renderer.getDiagramFromText;
+            if (!fn) throw Error('Mermaid graph extraction unavailable. Pass options.graph or a compatible Mermaid 11 build.');
+            const parsed = await fn(source);
+            if (!parsed.db?.getVertices || !parsed.db?.getEdges) throw Error('Mermaid flowchart database not available.');
+            return normalizeGraph({ nodes:parsed.db.getVertices(), edges:parsed.db.getEdges() });
+          });
+          graph = raw;
+          }
+        }
+        if (destroyed) return;
+        start = findStart(graph, opts.startId);
+        path = []; current = start;
+        paint();
+        if (mode === 'spotlight') await api.setMode('spotlight');
+        else report();
+      } catch (error) {
+        if (!destroyed) { body.replaceChildren(elt('div','mf-error',error.message)); count.textContent='Unable to load'; }
+        throw error;
+      }
+    },
+    destroy() { destroyed=true; if(animation) cancelAnimationFrame(animation); resizeObserver?.disconnect(); root.replaceChildren(); },
+  };
+  if (source || opts.graph) await api.setSource(source, opts.graph);
+  else body.append(elt('div','mf-loading','No flowchart loaded. Call setSource(source).'));
+  return api;
+}
+
+const version = VERSION;
+window.MermaidFocus = {createMermaidFocus, version};
+
+})();
+
+  </script>
+  <script>
+    const SAMPLE="flowchart TD\n    Start{\"Wanna change<br/>that feeling?\"}\n\n    Start -->|\"Yes!!\"| Needs\n    Start -->|\"Nah, not really\"| Sit[\"Sit with it!\"]\n\n    Needs{\"Are you adequately:<br/>• Hydrated<br/>• Medicated<br/>• Nourished<br/>• Rested?\"}\n    Needs -->|\"Uh... no\"| PLEASE[\"Use PLEASE\"]\n    PLEASE -->|\"Return to start\"| Start\n    Needs -->|\"Reasonably, yeah\"| Overwhelmed\n\n    Overwhelmed{\"Are you feeling<br/>overwhelmed by<br/>the emotion?\"}\n    Overwhelmed -->|\"Yes!\"| Distress[\"Go to Distress<br/>Tolerance Flow Chart\"]\n    Overwhelmed -->|\"No\"| Regulate[\"Awesome! You're in<br/>the right place!<br/>Let's regulate!\"]\n    Regulate --> Feeling\n\n    Feeling{\"Do you know<br/>WHAT you are feeling?\"}\n    Feeling -->|\"Uh, no\"| Sensation[\"Use Emotion Sensation Wheel,<br/>notice your body, and explore\"]\n    Feeling -->|\"Yes\"| Trigger\n\n    Trigger{\"Do you know what<br/>triggered this emotion?\"}\n    Trigger -->|\"No\"| Facts[\"Use CHECK the FACTS\"]\n    Trigger -->|\"Yes\"| Context\n\n    Context{\"Does your reaction<br/>FIT THE CONTEXT?\"}\n    Context -->|\"Maybe\"| Facts\n    Context -->|\"Yes\"| Change\n\n    Change{\"Can anything you do now<br/>change the situation?\"}\n    Change -->|\"Yes\"| Solve[\"PROBLEM SOLVE!\"]\n    Change -->|\"No\"| Soothe[\"Self-soothe +<br/>radical acceptance\"]\n\n    ABC[\"Use ABC to grow your ability<br/>to stay grounded through emotions\"]\n    ABC -.-> Solve\n    ABC -.-> Soothe\n\n    style Start fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e\n    style Solve fill:#dcfce7,stroke:#16a34a,color:#14532d\n    style Soothe fill:#dcfce7,stroke:#16a34a,color:#14532d\n    style Sit fill:#dcfce7,stroke:#16a34a,color:#14532d\n    style Distress fill:#fef3c7,stroke:#d97706,color:#78350f\n    style PLEASE fill:#fef3c7,stroke:#d97706,color:#78350f\n    style Facts fill:#fef3c7,stroke:#d97706,color:#78350f\n    style Sensation fill:#fef3c7,stroke:#d97706,color:#78350f\n    style ABC fill:#f3e8ff,stroke:#9333ea,color:#581c87\n";
+    const input=document.getElementById('source'),status=document.getElementById('status');
+    input.value=SAMPLE;
+    let app=null;
+    async function load(text){
+      status.textContent='Loading…';status.className='muted';
+      try {
+        // Reuse the same app instance; retains the SVG-first engine.
+        if(app) await app.setSource(text);
+        else app=await MermaidFocus.createMermaidFocus('#wizard',{
+          source:text, mode:'spotlight', duration:460,
+          engine:'builtin', title:'Emotion regulation',
+        });
+        status.textContent=`Loaded: ${app.getGraph().nodes.length} nodes, ${app.getGraph().edges.length} guided connections`;
+        status.className='muted';
+        window.focusDemo=app;window.installFocusGraph?.();
+      } catch(e) {
+        status.textContent=`Error: ${e.message}`;status.className='error';
+        console.error(e);
+      }
+    }
+    document.getElementById('apply').addEventListener('click',()=>load(input.value));
+    load(SAMPLE);
+  </script>
+<script>window.installFocusGraph=function installFocusGraph(){
+   if(!window.focusDemo){setTimeout(installFocusGraph,100);return}
+   if(window.focusGraphEnhanced)return;
+   window.focusGraphEnhanced=true;
+   const app=window.focusDemo, root=document.querySelector("#wizard").shadowRoot;
+   const original=root.querySelector(".mf-spotlight"), visual=original.firstElementChild, title=root.querySelector(".mf-head");
+   const originalSVG=visual.querySelector("svg")?.cloneNode(true);
+   if(!originalSVG)return;
+   originalSVG.querySelectorAll(".mf-hidden").forEach(el=>el.classList.remove("mf-hidden"));
+   const oldBox=visual.querySelector('svg').getBBox();
+   const fullW=960,fullH=Math.max(500,oldBox.y+oldBox.height+60);
+   const originalMarkup=originalSVG.outerHTML;
+   const css=document.createElement("style");
+   css.textContent=`.mf-spotlight{height:min(65vh,680px);overflow:auto!important;overscroll-behavior:contain}.mf-spotlight>div:first-child{height:auto!important;min-height:100%}.mf-spotlight svg{display:block;width:100%;height:auto;max-width:none}.mf-spotlabel,.mf-overview-button{display:none!important}.mf-graph-metadata{font-size:12px;padding:10px 16px;background:#eef5ff;color:#456079}.mf-depth{padding:7px;border:1px solid #dce2ec;border-radius:8px;background:white;font:600 13px system-ui}.mf-extra{margin:12px 0 20px;border:1px solid #d8e5fa;background:#f5f9ff;padding:15px;border-radius:9px;font-size:14px;line-height:1.6}.mf-extra ul{padding-left:20px;margin:9px 0 0}.mf-extra li+li{margin-top:6px}@media(max-width:570px){.mf-brand{flex-basis:100%}.mf-head{justify-content:space-between;gap:8px}}`;
+   root.append(css);
+   const dl=document.createElement("label");dl.style.cssText="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700";dl.textContent="Connections ";
+   const depthSel=document.createElement("select");depthSel.className="mf-depth";
+   for(let n=1;n<=4;n++){const opt=document.createElement("option");opt.value=n;opt.textContent=n+(n===1?" hop":" hops");depthSel.append(opt)}
+   dl.append(depthSel);title.append(dl);
+   const meta=document.createElement("div");meta.className="mf-graph-metadata";original.after(meta);
+   const overviewBtn=document.createElement("button");overviewBtn.textContent="Overview";overviewBtn.style.cssText="padding:8px 12px;border:1px solid #dce2ec;background:white;border-radius:9px;color:#17427c;font:650 12px system-ui;cursor:pointer";title.append(overviewBtn);
+   let showOverview=false;
+   const detail={
+    Start:"You do not have to change every feeling. Sometimes simply noticing and allowing it is enough.",
+    Needs:"Check water, food, prescribed treatment and rest first. Basic physical needs affect emotional intensity.",
+    Sit:"Notice the feeling, name it if possible, and allow it to change without urgently fixing it.",
+    PLEASE:["Treat physical illness and follow prescribed care.","Eat regularly and drink water.","Avoid mood-altering substances.","Prioritize rest and sustainable movement.","Reassess your emotion afterwards."],
+    Overwhelmed:"If the emotion is too intense to think clearly, use a distress-tolerance skill first.",
+    Distress:["Ground yourself using your senses.","Breathe gently with a longer exhale or try cool water on your face.","Pause impulsive decisions until the intensity decreases."],
+    Regulate:"Now identify what you feel and what happened just before it.",
+    Feeling:"Try identifying sadness, anger, fear, shame, joy, disappointment or a mixture.",
+    Sensation:["Notice your heartbeat, muscle tension, breathing and temperature.","Use an emotion wheel to consider possible feelings.","Return to the question after exploring."],
+    Trigger:"A trigger can be an event, memory, interaction, assumption or bodily sensation.",
+    Facts:["Describe what objectively happened without judgments.","Identify assumptions about motives and consequences.","Consider evidence and alternative explanations.","Check whether the intensity fits what you know."],
+    Context:"Does the emotional reaction and its intensity make sense in the actual circumstances?",
+    Change:"Focus on actions within your control, not changes you want others to make.",
+    Solve:["Define the practical problem.","Brainstorm a few options.","Take the smallest useful step.","Review the result and adjust."],
+    Soothe:["Soothe yourself using music, movement, comforting sensations or support.","Acknowledge the current reality without approving of it.","Allow difficult feelings without fighting what cannot be changed."],
+    ABC:"A: Accumulate positive experiences. B: Build mastery. C: Cope ahead."
+   };
+   function draw(){
+     const state=app.getState(),graph=app.getGraph();
+     const isSpot=state.mode==="spotlight";dl.hidden=!isSpot;overviewBtn.hidden=!isSpot;meta.hidden=!isSpot;
+     const body=root.querySelector(".mf-body");
+     body.querySelector(".mf-extra")?.remove();
+     const tips=detail[state.current];
+     if(tips){
+       const panel=document.createElement("section");panel.className="mf-extra";
+       if(Array.isArray(tips)){const ul=document.createElement("ul");tips.forEach(s=>{const li=document.createElement("li");li.textContent=s;ul.append(li)});panel.append(ul)}
+       else panel.textContent=tips;
+       body.querySelector(".mf-question")?.after(panel);
+     }
+     if(!isSpot)return;
+     if(showOverview){
+       visual.innerHTML=originalMarkup;
+       const svg=visual.querySelector("svg");svg.setAttribute("viewBox",`0 0 ${fullW} ${fullH}`);svg.style.width=fullW+"px";svg.style.height=fullH+"px";
+       svg.querySelectorAll(".mf-hidden").forEach(el=>el.classList.remove("mf-hidden"));
+       meta.textContent=`Complete flowchart · ${graph.nodes.length} nodes · ${graph.edges.length} decision connections · scroll to explore`;
+       overviewBtn.textContent="Focus";
+       requestAnimationFrame(()=>{if(!showOverview)return;let node=svg.querySelector(`[data-node-id="${state.current}"]`)||svg.querySelector(`[id^="flowchart-${state.current}-"]`);if(node){const b=node.getBBox();original.scrollTo({left:Math.max(0,b.x+b.width/2-original.clientWidth/2),top:Math.max(0,b.y+b.height/2-original.clientHeight/2),behavior:"instant"})}});
+       return;
+     }
+     const depth=Number(depthSel.value)||1, inbound=new Map([[state.current,0]]),outbound=new Map([[state.current,0]]);
+     function walk(m,reverse){const queue=[state.current];for(let i=0;i<queue.length;i++){let id=queue[i],d=m.get(id);if(d>=depth)continue;for(const edge of graph.edges){const other=reverse?(edge.end===id?edge.start:null):(edge.start===id?edge.end:null);if(other&&!m.has(other)){m.set(other,d+1);queue.push(other)}}}}
+     walk(inbound,true);walk(outbound,false);
+     const ids=[...new Set([...inbound.keys(),...outbound.keys()])];
+     const rank=id=>id===state.current?0:inbound.has(id)&&(!outbound.has(id)||inbound.get(id)<outbound.get(id))?-inbound.get(id):outbound.get(id);
+     ids.sort((a,b)=>rank(a)-rank(b)||graph.nodes.findIndex(n=>n.id===a)-graph.nodes.findIndex(n=>n.id===b));
+     const safe=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+     const boxes=new Map();let y=47;
+     for(const id of ids){const words=graph.nodes.find(n=>n.id===id).label.replace(/\n/g," ").split(/\s+/),lines=[];let line="";
+       for(const word of words){if((line+" "+word).length>37&&line){lines.push(line);line=word}else line+=(line?" ":"")+word}if(line)lines.push(line);
+       const h=Math.max(78,36+lines.length*22);boxes.set(id,{y,h,lines});y+=h+82;
+     }
+     const total=Math.max(290,y+30),marker="fg-arrow";
+     let result=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 508 ${total}" role="img" aria-label="Focused connected flowchart"><defs><marker id="${marker}" markerWidth="7" markerHeight="7" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker></defs>`;
+     let arrows=0;
+     for(const edge of graph.edges){const a=boxes.get(edge.start),b=boxes.get(edge.end);if(!a||!b)continue;arrows++;
+       const skip=ids.indexOf(edge.end)-ids.indexOf(edge.start)>1,forward=b.y>a.y&&!skip;
+       const path=forward?`M254 ${a.y+a.h} C254 ${a.y+a.h+28},254 ${b.y-28},254 ${b.y-6}`:`M424 ${a.y+a.h/2} C490 ${a.y+a.h/2},490 ${b.y+b.h/2},431 ${b.y+b.h/2}`;
+       result+=`<path d="${path}" fill="none" stroke="${edge.start===state.current?"#2563eb":"#94a3b8"}" stroke-width="${edge.start===state.current?3:2}" marker-end="url(#${marker})"/>`;
+       if(edge.label){const label=edge.label.slice(0,24),w=Math.min(207,label.length*7+16),x=forward?268:Math.min(380,503-w),ly=(a.y+a.h+b.y)/2;
+         result+=`<rect x="${x}" y="${ly-15}" width="${w}" height="24" rx="5" fill="white" stroke="#e2e8f0"/><text x="${x+w/2}" y="${ly+1}" text-anchor="middle" font-size="12" font-family="system-ui" fill="#334155">${safe(label)}</text>`;
+       }
+     }
+     for(const id of ids){const p=boxes.get(id),active=id===state.current,choice=graph.edges.some(e=>e.start===state.current&&e.end===id);
+       result+=`<g class="fg-node" data-node="${safe(id)}" ${choice?'role="button" tabindex="0"':''}><rect x="84" y="${p.y}" width="340" height="${p.h}" rx="14" fill="${active?"#dbeafe":choice?"#eff6ff":"white"}" stroke="${active?"#1d4ed8":choice?"#60a5fa":"#94a3b8"}" stroke-width="${active?3:2}"/>`;
+       if(active)result+=`<text x="254" y="${p.y-14}" text-anchor="middle" font-family="system-ui" font-size="12" font-weight="750" fill="#1d4ed8">CURRENT STEP</text>`;
+       p.lines.forEach((line,i)=>{result+=`<text x="254" y="${p.y+p.h/2-(p.lines.length-1)*11+i*22+5}" text-anchor="middle" font-family="system-ui" font-size="17" font-weight="${active?750:550}" fill="#14263e">${safe(line)}</text>`});
+       result+="</g>";
+     }
+     result+="</svg>";visual.innerHTML=result;visual.querySelector("svg").style.cssText="width:100%;height:auto;display:block";
+     visual.querySelectorAll('[role="button"]').forEach(node=>{const target=node.getAttribute("data-node");node.style.cursor="pointer";node.addEventListener("click",()=>app.next(target));node.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();app.next(target)}})});
+     meta.textContent=depth+" hop"+(depth>1?"s":"")+" away · "+ids.length+" nodes · "+arrows+" arrows · tap a next node or choose below";
+     overviewBtn.textContent="Overview";original.scrollTop=0;original.scrollLeft=0;
+     visual.animate?.([{opacity:.6,transform:"translateY(9px)"},{opacity:1,transform:"translateY(0)"}],{duration:260,easing:"ease-out"});
+   }
+   for(const method of ["next","back","restart","toggleOverview","setSource","setMode"]){const prev=app[method].bind(app);app[method]=(...args)=>{const res=prev(...args);if(res&&typeof res.then==="function")return res.then(value=>{draw();return value});draw();return res}};
+   depthSel.addEventListener("change",()=>{showOverview=false;draw()});
+   overviewBtn.addEventListener("click",()=>{showOverview=!showOverview;draw()});
+   draw();
+ };window.installFocusGraph();</script></body>
+</html>
