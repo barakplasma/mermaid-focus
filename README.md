@@ -4,7 +4,7 @@ Progressive disclosure for Mermaid flowcharts. Turn a flowchart into a **guided 
 
 **Live demo:** https://mermaid-focus.barakplasma.workers.dev/
 
-![Mobile spotlight](docs/screenshots/mobile-spotlight.png)
+**Live preview:** [Open the demo](https://mermaid-focus.barakplasma.workers.dev/).
 
 ## Features
 
@@ -50,6 +50,7 @@ The corresponding ES module is `public/mermaid-focus.js`.
 - `public/mermaid-focus.js`: ES module version.
 - `examples/emotion-regulation.mmd`: full source graph in Mermaid syntax, with 16 nodes, 16 decision connections, and 2 dotted associations.
 - `tests/smoke.py`: local smoke test with Playwright and Chromium (optional; install `playwright`).
+- `docs/architecture.md`: implementation and known constraints.
 
 The built-in renderer supports a useful subset of Mermaid **flowcharts**, not sequence diagrams or the whole Mermaid syntax. Ondine/pre-rendered SVG remains experimental; see [original architecture notes](docs/architecture.md).
 

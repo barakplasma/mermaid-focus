@@ -1,0 +1,45 @@
+flowchart TD
+    Start{"Wanna change<br/>that feeling?"}
+
+    Start -->|"Yes!!"| Needs
+    Start -->|"Nah, not really"| Sit["Sit with it!"]
+
+    Needs{"Are you adequately:<br/>• Hydrated<br/>• Medicated<br/>• Nourished<br/>• Rested?"}
+    Needs -->|"Uh... no"| PLEASE["Use PLEASE"]
+    PLEASE -->|"Return to start"| Start
+    Needs -->|"Reasonably, yeah"| Overwhelmed
+
+    Overwhelmed{"Are you feeling<br/>overwhelmed by<br/>the emotion?"}
+    Overwhelmed -->|"Yes!"| Distress["Go to Distress<br/>Tolerance Flow Chart"]
+    Overwhelmed -->|"No"| Regulate["Awesome! You're in<br/>the right place!<br/>Let's regulate!"]
+    Regulate --> Feeling
+
+    Feeling{"Do you know<br/>WHAT you are feeling?"}
+    Feeling -->|"Uh, no"| Sensation["Use Emotion Sensation Wheel,<br/>notice your body, and explore"]
+    Feeling -->|"Yes"| Trigger
+
+    Trigger{"Do you know what<br/>triggered this emotion?"}
+    Trigger -->|"No"| Facts["Use CHECK the FACTS"]
+    Trigger -->|"Yes"| Context
+
+    Context{"Does your reaction<br/>FIT THE CONTEXT?"}
+    Context -->|"Maybe"| Facts
+    Context -->|"Yes"| Change
+
+    Change{"Can anything you do now<br/>change the situation?"}
+    Change -->|"Yes"| Solve["PROBLEM SOLVE!"]
+    Change -->|"No"| Soothe["Self-soothe +<br/>radical acceptance"]
+
+    ABC["Use ABC to grow your ability<br/>to stay grounded through emotions"]
+    ABC -.-> Solve
+    ABC -.-> Soothe
+
+    style Start fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+    style Solve fill:#dcfce7,stroke:#16a34a,color:#14532d
+    style Soothe fill:#dcfce7,stroke:#16a34a,color:#14532d
+    style Sit fill:#dcfce7,stroke:#16a34a,color:#14532d
+    style Distress fill:#fef3c7,stroke:#d97706,color:#78350f
+    style PLEASE fill:#fef3c7,stroke:#d97706,color:#78350f
+    style Facts fill:#fef3c7,stroke:#d97706,color:#78350f
+    style Sensation fill:#fef3c7,stroke:#d97706,color:#78350f
+    style ABC fill:#f3e8ff,stroke:#9333ea,color:#581c87
