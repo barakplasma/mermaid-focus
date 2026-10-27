@@ -47,11 +47,10 @@ with sync_playwright() as p:
         page.wait_for_function('document.querySelector("#wizard").shadowRoot.querySelectorAll("svg .mf-focus-node").length >= 10')
         xvals=page.evaluate('''() => Array.from(document.querySelector('#wizard').shadowRoot.querySelectorAll('svg .mf-focus-node rect')).map(r=>Number(r.getAttribute('x')))''')
         assert len(set(xvals))>=3, f"Spotlight should have multiple columns, got {xvals}"
-        svg=page.locator("#wizard").locator("svg").first
-        vb=svg.get_attribute("viewBox").split()
-        assert float(vb[2])>650, f"Spotlight layout too narrow: {vb}"
+        # A zoomed-in viewBox can be narrow; test the actual rendered node spread.
+        assert max(xvals)-min(xvals) > 500, f"Graph is still effectively one column: {xvals}"
         page.evaluate('window.focusDemo.fitAll()')
-        assert page.evaluate('window.focusDemo.getCamera().w > 500')
+        assert page.evaluate('window.focusDemo.getCamera().w > 650')
 
         page.locator("#vanilla-button").click()
         page.wait_for_selector('#vanilla-surface svg[data-vanilla-kind="flowchart"]')
