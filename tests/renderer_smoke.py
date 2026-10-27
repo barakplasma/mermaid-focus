@@ -58,6 +58,7 @@ with sync_playwright() as p:
         assert page.locator("#wizard").is_hidden(), "Vanilla diagram should have no spotlight wrapper"
 
         # A second unsupported Mermaid diagram must also stay in vanilla.
+        page.locator("details summary").click()
         page.locator("#source").fill('sequenceDiagram\n    Alice->>Bob: Hello')
         page.locator("#apply").click()
         page.wait_for_selector('#vanilla-surface svg[data-vanilla-kind="sequenceDiagram"]')
