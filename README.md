@@ -6,6 +6,23 @@ Progressive disclosure for Mermaid flowcharts. Turn a flowchart into a **guided 
 
 **Live preview:** [Open the demo](https://mermaid-focus.barakplasma.workers.dev/).
 
+## Two independent rendering modes
+
+The demo offers **Focus plugin** and **Vanilla Mermaid** buttons. Focus is
+available for directed `flowchart`/`graph` diagrams; vanilla uses the standard
+Mermaid 11 renderer without mounting the plugin on that diagram. Non-flowchart
+types automatically use vanilla so a `classDiagram` or `sequenceDiagram`
+is never converted into a wizard. Vanilla loading uses jsDelivr and requires
+network access; flowchart plugin examples remain self-contained/offline.
+
+The conceptual [Mermaid Focus class diagram](examples/mermaid-focus-architecture.mmd)
+is included as a regression test. Open `/?example=class` on the demo.
+
+Spotlight now groups adjacent nodes into **multiple columns**, while keeping
+their directed connections and labels. Full Overview groups independent graph
+components instead of stacking every disconnected node vertically. Pan,
+pinch/wheel zoom, Center and Fit all continue working.
+
 ## Stress-testing directed graphs
 
 Switch **Example → Directed-graph torture test** in the demo to inspect a deliberately

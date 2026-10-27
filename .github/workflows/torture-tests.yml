@@ -33,3 +33,5 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Test directed graph torture fixture
         run: python tests/torture_smoke.py
+      - name: Test multi-column layout and vanilla Mermaid isolation
+        run: python tests/renderer_smoke.py

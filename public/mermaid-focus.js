@@ -17,7 +17,7 @@
  * graph as { nodes:[{id,label,domId?}], edges:[{start,end,label?}] }.
  */
 
-const VERSION = '0.5.1';
+const VERSION = '0.6.0';
 const DEFAULT_MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.esm.min.mjs';
 let mermaidPromise;
 let uniqueId = 0;
@@ -157,17 +157,24 @@ function offlineSvg(graph,decorations=[]) {
       if (!depth.has(e.end)) { depth.set(e.end,d+1);queue.push(e.end); }
     }
   }
+  // Group disconnected nodes and independent roots rather than stretching them into one column.
   let bottom=Math.max(...depth.values(),0);
-  for(const n of nodes) if(!depth.has(n.id)) depth.set(n.id,++bottom);
+  const missing=nodes.filter(n=>!depth.has(n.id));
+  for(let i=0;i<missing.length;i++)depth.set(missing[i].id,bottom+1+Math.floor(i/4));
   const rows=new Map();
   for(const n of nodes){const d=depth.get(n.id);if(!rows.has(d))rows.set(d,[]);rows.get(d).push(n);}
   const maxRow=Math.max(1,...[...rows.values()].map(r=>r.length));
-  const nodeWidth=290, rowWidth=Math.max(960,maxRow*360+120), rowHeight=158;
-  const totalHeight=(Math.max(...rows.keys())+1)*rowHeight+120;
+  const nodeWidth=270,spaceX=345,rowWidth=Math.max(1040,Math.min(5,maxRow)*spaceX+200),rowHeight=178;
   const positions=new Map();
-  for(const [d,group] of rows){
-    group.forEach((n,i)=>positions.set(n.id,{x:rowWidth/2 + (i-(group.length-1)/2)*355,y:65+d*rowHeight,w:nodeWidth,h:106}));
+  let rowNumber=0;
+  for(const [,group] of [...rows.entries()].sort((a,b)=>a[0]-b[0])){
+    for(let offset=0;offset<group.length;offset+=5){
+      const chunk=group.slice(offset,offset+5);
+      chunk.forEach((n,i)=>positions.set(n.id,{x:rowWidth/2+(i-(chunk.length-1)/2)*spaceX,y:65+rowNumber*rowHeight,w:nodeWidth,h:106}));
+      rowNumber++;
+    }
   }
+  const totalHeight=Math.max(400,rowNumber*rowHeight+140);
   const escape = s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   function linesOf(label){
     const pieces=String(label).split(/\n/), result=[];
@@ -213,112 +220,121 @@ function offlineSvg(graph,decorations=[]) {
 
 /** Diagram-local, directed ego network. SVG stays readable on narrow phones;
  * the complete original SVG is kept separately for Overview. */
-function focusSvg(graph, current, radius) {
-  const edgeList=graph.edges;
-  const inward=new Map([[current,0]]), outward=new Map([[current,0]]);
-  const walk=(dist, reverse) => {
-    let queue=[current];
-    for(let i=0;i<queue.length;i++) {
-      const id=queue[i], d=dist.get(id);
-      if(d >= radius) continue;
-      for(const e of edgeList) {
-        const next=reverse ? (e.end===id ? e.start : null) : (e.start===id ? e.end : null);
-        if(next && !dist.has(next)){dist.set(next,d+1);queue.push(next);}
+function focusSvg(graph,current,radius) {
+  // A compact grid per directed hop layer; never linearize an arbitrary graph into one column.
+  const links=graph.edges, byId=new Map(graph.nodes.map(n=>[n.id,n]));
+  const inward=new Map([[current,0]]),outward=new Map([[current,0]]);
+  const walk=(dest,reverse)=>{
+    const q=[current];
+    for(let i=0;i<q.length;i++){
+      const id=q[i],depth=dest.get(id);
+      if(depth>=radius)continue;
+      for(const e of links){
+        const next=reverse?(e.end===id?e.start:null):(e.start===id?e.end:null);
+        if(next!==null&&!dest.has(next)){dest.set(next,depth+1);q.push(next);}
       }
     }
   };
   walk(inward,true);walk(outward,false);
   const selected=new Set([...inward.keys(),...outward.keys()]);
-  const rank = id => {
-    if(id===current) return 0;
-    const i=inward.get(id),o=outward.get(id);
-    if(i!==undefined && (o===undefined || i<o)) return -i;
-    return o===undefined?-i:o;
+  const rank=id=>{
+    if(id===current)return 0;
+    const incoming=inward.get(id),outgoing=outward.get(id);
+    return incoming!==undefined&&(outgoing===undefined||incoming<outgoing)?-incoming:outgoing;
   };
-  const arranged=[...selected].sort((a,b)=>{
-    let ra=rank(a), rb=rank(b);
-    if(ra!==rb)return ra-rb;
-    return graph.nodes.findIndex(x=>x.id===a)-graph.nodes.findIndex(x=>x.id===b);
-  });
-  const nodes=new Map(graph.nodes.map(n=>[n.id,n]));
-  const E=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const width=500, cx=250, nodeW=340, top=54;
-  const chunks=s=>{
-    const output=[];
-    for(const section of String(s).split(/\n/)) {
-      let line='';
-      for(const word of section.split(/\s+/)){
-        if(!word)continue;
-        if(line && (line+' '+word).length>39){output.push(line);line=word;}
-        else line+=(line?' ':'')+word;
-      }
-      if(line)output.push(line);
-    }
-    return output.length ? output : [''];
-  };
-  let cursor=top;
-  const coords=new Map();
-  for(const id of arranged){
-    const lines=chunks(nodes.get(id)?.label||id);
-    const height=Math.max(78,24+lines.length*21+14);
-    coords.set(id,{x:cx-nodeW/2,y:cursor,w:nodeW,h:height,lines});
-    cursor+=height+84;
+  const levels=new Map();
+  for(const n of graph.nodes)if(selected.has(n.id)){
+    const r=rank(n.id);
+    if(!levels.has(r))levels.set(r,[]);
+    levels.get(r).push(n.id);
   }
-  const height=Math.max(320,cursor-84+64);
-  const arrow='mf-focus-arrow-'+(++uniqueId);
-  const out=[`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" aria-label="Focused flowchart with connected nodes and arrows" role="img">`,
-    `<defs><marker id="${arrow}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3b82f6"/></marker></defs>`];
-  let renderedEdges=0;
-  // Draw arrows behind nodes. All edges in the radius are preserved, including
-  // direct loops; only genuine decision connections receive active controls.
-  for(const e of edgeList){
+  const rows=[...levels.entries()].sort((a,b)=>a[0]-b[0]);
+  const maxCols=Math.max(1,...rows.map(([,ids])=>Math.min(4,Math.ceil(Math.sqrt(ids.length*1.6)))));
+  const nodeW=252,spacingX=306,marginX=78,width=Math.max(450,marginX*2+maxCols*spacingX);
+  const coords=new Map();
+  const wrap=label=>{
+    const output=[];
+    for(const paragraph of String(label).split(/\n/)){
+      let line="";
+      for(const word of paragraph.split(/\s+/)){
+        if(!word)continue;
+        if(line&&(line+" "+word).length>29){output.push(line);line=word;}
+        else line+=(line?" ":"")+word;
+      }
+      output.push(line);
+    }
+    return output.length?output:[""];
+  };
+  let cursorY=65;
+  for(const [,ids] of rows){
+    const cols=Math.min(maxCols,Math.max(1,Math.ceil(Math.sqrt(ids.length*1.6))));
+    for(let offset=0;offset<ids.length;offset+=cols){
+      const group=ids.slice(offset,offset+cols);
+      const y=cursorY;
+      let rowMax=78;
+      group.forEach((id,i)=>{
+        const lines=wrap(byId.get(id)?.label||id),h=Math.max(78,32+lines.length*19);
+        const x=width/2+(i-(group.length-1)/2)*spacingX-nodeW/2;
+        coords.set(id,{x,y,w:nodeW,h,lines});
+        rowMax=Math.max(rowMax,h);
+      });
+      cursorY+=rowMax+74;
+    }
+    cursorY+=36;
+  }
+  const height=Math.max(330,cursorY+38);
+  const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,'"').replace(/"/g,"&quot;");
+  const marker="mf-focus-arrow-"+(++uniqueId);
+  const out=[`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Focused directed graph in multiple columns"><defs><marker id="${marker}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#3b82f6"/></marker></defs>`];
+  const pairs=new Map();let drawn=0;
+  for(const e of links){
     const a=coords.get(e.start),b=coords.get(e.end);
     if(!a||!b)continue;
-    renderedEdges++;
-    const forward=b.y>a.y, centerX=cx;
-    let d,x,y;
-    if(forward){
-      const y1=a.y+a.h, y2=b.y;
-      // A long hop must route around intervening nodes, never through them.
-      const skipped=arranged.slice(arranged.indexOf(e.start)+1,arranged.indexOf(e.end)).length;
-      if(skipped > 0){
-        d=`M ${a.x+a.w} ${a.y+a.h/2} C 474 ${a.y+a.h/2}, 474 ${b.y+b.h/2}, ${b.x+b.w+4} ${b.y+b.h/2}`;
-        x=360;y=(a.y+a.h/2+b.y+b.h/2)/2;
-      }else{
-        d=`M ${centerX} ${y1} C ${centerX} ${y1+40} ${centerX} ${y2-40} ${centerX} ${y2-6}`;
-        x=centerX+10; y=(y1+y2)/2-4;
-      }
+    drawn++;
+    const key=e.start+"→"+e.end,parallel=pairs.get(key)||0;
+    pairs.set(key,parallel+1);
+    let d,lx,ly;
+    if(e.start===e.end){
+      const sx=a.x+a.w,cy=a.y+a.h/2,bulge=56+parallel*30;
+      d=`M${sx-2} ${cy-15} C${sx+bulge} ${cy-78},${sx+bulge} ${cy+80},${sx-2} ${cy+15}`;
+      lx=sx+bulge*.65;ly=cy-34;
+    }else if(b.y>a.y+25){
+      const sx=a.x+a.w/2+(parallel?17*parallel:0),sy=a.y+a.h,tx=b.x+b.w/2+(parallel?17*parallel:0),ty=b.y;
+      const diff=Math.max(34,(ty-sy)*.45);
+      d=`M${sx} ${sy} C${sx} ${sy+diff},${tx} ${ty-diff},${tx} ${ty-5}`;
+      lx=(sx+tx)/2+12;ly=(sy+ty)/2-8;
+    }else if(Math.abs(b.y-a.y)<25){
+      const right=b.x>a.x;
+      const sx=right?a.x+a.w:a.x,tx=right?b.x:b.x+b.w;
+      const cy=a.y+a.h/2,dy=b.y+b.h/2;
+      d=`M${sx} ${cy} C${sx+(right?56:-56)} ${cy-28-parallel*20},${tx+(right?-56:56)} ${dy-28-parallel*20},${tx} ${dy}`;
+      lx=(sx+tx)/2;ly=Math.min(cy,dy)-32-parallel*20;
     }else{
-      const x1=a.x+a.w, x2=b.x+b.w, y1=a.y+a.h/2, y2=b.y+b.h/2;
-      d=`M ${x1} ${y1} C 485 ${y1} 485 ${y2} ${x2+5} ${y2}`;
-      x=430;y=(y1+y2)/2-3;
+      const sx=a.x+a.w,sy=a.y+a.h*.43,tx=b.x+b.w,ty=b.y+b.h*.55;
+      const channel=width-34+parallel*24;
+      d=`M${sx} ${sy} C${channel} ${sy-32},${channel} ${ty+32},${tx+4} ${ty}`;
+      lx=Math.min(width-120,Math.max(sx,tx)+38);ly=(sy+ty)/2-9;
     }
     const active=e.start===current;
-    out.push(`<path data-edge-start="${E(e.start)}" data-edge-end="${E(e.end)}" d="${d}" fill="none" stroke="${active?'#2563eb':'#94a3b8'}" stroke-width="${active?3:2}" marker-end="url(#${arrow})"/>`);
+    out.push(`<path data-edge-start="${esc(e.start)}" data-edge-end="${esc(e.end)}" d="${d}" stroke="${active?"#2563eb":"#94a3b8"}" stroke-width="${active?3:2}" fill="none" marker-end="url(#${marker})"/>`);
     if(e.label){
-      const label=e.label.length>25?e.label.slice(0,24)+'…':e.label;
-      const boxWidth=Math.min(210,Math.max(35,label.length*8+12));
-      // White edge-label backing prevents labels from disappearing on arrows.
-      const bx=Math.min(width-boxWidth-4,Math.max(2,x));
-      out.push(`<rect x="${bx}" y="${y-17}" rx="6" width="${boxWidth}" height="25" fill="#ffffff" stroke="#e2e8f0"/>`);
-      out.push(`<text x="${bx+boxWidth/2}" y="${y}" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" font-weight="650" fill="#334155">${E(label)}</text>`);
+      const label=e.label.length>26?e.label.slice(0,25)+"…":e.label;
+      const w=Math.min(210,Math.max(38,label.length*7.3+14));
+      const x=Math.max(4,Math.min(width-w-4,lx));
+      out.push(`<rect x="${x}" y="${ly-17}" width="${w}" height="24" rx="5" fill="white" stroke="#e2e8f0"/><text x="${x+w/2}" y="${ly}" text-anchor="middle" font-size="12" fill="#334155" font-family="system-ui">${esc(label)}</text>`);
     }
   }
-  for(const id of arranged){
-    const p=coords.get(id),node=nodes.get(id),isCurrent=id===current;
-    const outgoing=edgeList.some(e=>e.start===current && e.end===id);
-    const fill=isCurrent?'#dbeafe':outgoing?'#eff6ff':'#ffffff';
-    const stroke=isCurrent?'#1d4ed8':outgoing?'#60a5fa':'#94a3b8';
-    const role=outgoing?'role="button" tabindex="0"': '';
-    out.push(`<g class="mf-focus-node" data-node-id="${E(id)}" ${role} aria-label="${E(node?.label||id)}">`);
-    out.push(`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="14" fill="${fill}" stroke="${stroke}" stroke-width="${isCurrent?3:2}"/>`);
-    if(isCurrent)out.push(`<text x="${cx}" y="${p.y-15}" text-anchor="middle" font-size="12" font-family="system-ui" font-weight="800" fill="#1d4ed8">● CURRENT STEP</text>`);
-    const y=p.y+p.h/2-((p.lines.length-1)*21)/2+5;
-    p.lines.forEach((line,i)=>out.push(`<text x="${cx}" y="${y+i*21}" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" font-weight="${isCurrent?750:580}" fill="#14263e">${E(line)}</text>`));
-    out.push(`</g>`);
+  for(const n of graph.nodes){
+    const p=coords.get(n.id);if(!p)continue;
+    const active=n.id===current,choice=links.some(e=>e.start===current&&e.end===n.id);
+    out.push(`<g class="mf-focus-node" data-node-id="${esc(n.id)}" ${choice?'role="button" tabindex="0"':''} aria-label="${esc(n.label)}"><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" stroke="${active?"#1d4ed8":choice?"#60a5fa":"#94a3b8"}" stroke-width="${active?3:2}" fill="${active?"#dbeafe":choice?"#eff6ff":"white"}"/>`);
+    if(active)out.push(`<text x="${p.x+p.w/2}" y="${p.y-14}" text-anchor="middle" font-size="11" font-family="system-ui" font-weight="800" fill="#1d4ed8">CURRENT STEP</text>`);
+    const first=p.y+p.h/2-(p.lines.length-1)*9.5+4;
+    p.lines.forEach((line,i)=>out.push(`<text x="${p.x+p.w/2}" y="${first+i*19}" text-anchor="middle" font-family="system-ui" font-size="14" font-weight="${active?700:550}" fill="#14263e">${esc(line)}</text>`));
+    out.push("</g>");
   }
-  out.push(`</svg>`);
-  return {svg:out.join(''),height,width,count:arranged.length,connections:renderedEdges};
+  out.push("</svg>");
+  return {svg:out.join(""),height,width,count:coords.size,connections:drawn};
 }
 
 const CSS = `
