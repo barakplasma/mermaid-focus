@@ -1,0 +1,35 @@
+classDiagram
+    direction LR
+    class MermaidFocus {
+      +createMermaidFocus(host, options)
+      +setSource(source)
+      +setMode(mode)
+      +jumpTo(nodeId)
+      +getGraph()
+      +getCamera()
+    }
+    class FlowchartParser {
+      +offlineFlowchart(source)
+      +normalizeGraph(graph)
+    }
+    class SpotlightRenderer {
+      +focusSvg(graph, current, radius)
+      +offlineSvg(graph, annotations)
+      +fitCurrent()
+      +zoomAt(multiplier)
+    }
+    class WizardNavigator {
+      +next(nodeId)
+      +back()
+      +restart()
+    }
+    class Graph {
+      +nodes
+      +edges
+    }
+    MermaidFocus --> FlowchartParser : parses
+    MermaidFocus --> SpotlightRenderer : renders
+    MermaidFocus --> WizardNavigator : navigates
+    FlowchartParser --> Graph : produces
+    SpotlightRenderer --> Graph : reads
+    WizardNavigator --> Graph : traverses
